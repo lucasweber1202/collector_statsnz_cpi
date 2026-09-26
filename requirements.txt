@@ -11,3 +11,5 @@ sqlalchemy>=2.0
 pandas>=2.0
 
 # Source-specific parsers — keep only what the source actually needs
+
+openpyxl>=3.1

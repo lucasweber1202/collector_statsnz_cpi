@@ -9,3 +9,5 @@ COLLECTOR_DB_URL=postgresql+psycopg2://user:password@localhost:5432/database .ve
 ```
 
 See `METHODOLOGY.md` for source, scope, and remaining forecast-target requirements. Production uses `PROD=true` and the usual Databricks/Key Vault settings.
+
+The source base-weight/hierarchy validation export is available with `python -m scripts.export_validation_xlsx --output validation.xlsx`. It is an analyst review artifact, not yet a persisted `weights` table or a verified CPI aggregation.

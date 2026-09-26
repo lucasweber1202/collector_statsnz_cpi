@@ -19,9 +19,10 @@ dependencies = [
   "httpx[socks]>=0.27",
   "sqlalchemy>=2.0",
   "pandas>=2.0",
+  "openpyxl>=3.1",
 ]
 [project.optional-dependencies]
-dev = ["mypy>=1.11", "pytest>=8.0", "ruff>=0.6"]
+dev = ["mypy>=1.11", "pytest>=8.0", "ruff>=0.6", "types-openpyxl"]
 
 [tool.setuptools]
 # Without an explicit declaration setuptools auto-discovery maps only a
