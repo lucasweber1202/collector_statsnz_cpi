@@ -1,0 +1,7 @@
+# Stats NZ CPI index collection
+
+- Authority: [Stats NZ quarterly CPI release](https://www.stats.govt.nz/information-releases/consumers-price-index-june-2026-quarter/). The collector probes quarterly release pages and selects their official `index-numbers.csv` file. The observed June 2026 release was published 21 July 2026.
+- The file carries 164 native IDs. The parsed source has 22,645 positive index observations. Applying a minimum three-year history and a six-month freshness gate leaves 163 series and 22,590 observations (1914–June 2026). The removed series is short or inactive; no fabricated zeros are stored. Stats NZ's early historical zero placeholders are treated as missing.
+- The all-groups target is `CPIQ.SE9A` / `STATSNZ_CPI_CPIQ_SE9A`: 1327 at December 2025, 1339 at March 2026, and 1359 at June 2026, matching the official CSV. These are quarterly **index levels**, not growth rates.
+- Native group labels distinguish all groups, level-1 groups, level-2 subgroups and level-3 classes. Source URLs and publication dates are retained in metadata. The current source file represents the latest published history; earlier publication snapshots cannot be reconstructed from it. A new vintage is recorded when a subsequently fetched value changes.
+- **Not ready for target sign-off:** official time-varying CPI weights and original weights, hierarchy mappings, validation workbook, and release-monitoring behavior required by `FORECAST_TARGET_GUIDELINES.md` are still absent. No PostgreSQL/Databricks runtime integration was verified in this environment.
