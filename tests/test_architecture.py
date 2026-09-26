@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import subprocess
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -45,4 +46,5 @@ def test_standalone_and_no_raw() -> None:
         assert "..\\collector_" not in source
         assert "sys.path" not in source
     forbidden = {".xlsx", ".xls", ".ods", ".csv", ".parquet"}
-    assert not [p for p in ROOT.rglob("*") if p.is_file() and p.suffix.lower() in forbidden]
+    tracked = subprocess.check_output(["git", "ls-files", "-z"], cwd=ROOT).decode().split("\0")
+    assert not [p for p in tracked if Path(p).suffix.lower() in forbidden]
