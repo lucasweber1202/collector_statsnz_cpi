@@ -18,11 +18,15 @@ from scripts.config import (
     missing_environment,
 )
 from scripts.db import build_engine
-from scripts.extract import collect
+from scripts.extract import SourceData, SourceLayoutError, collect
 from scripts.init_db import init_db
 from scripts.metadata import upsert_metadata
+from scripts.original_weights import build_hierarchy, upsert_hierarchy, upsert_original_weights
+from scripts.releases import LAYOUT_CHANGED, classify_release, stored_release
 from scripts.run_logs import insert_run_log
 from scripts.time_series import get_last_observations, upsert_time_series
+from scripts.validate import validate_release
+from scripts.weight_sources import parse_base_weights
 
 logger = logging.getLogger("main")
 
@@ -49,7 +53,7 @@ def _setup_logging(level: str) -> io.StringIO:
 
 
 def _parse_args(argv: list[str] | None) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Collect Stats NZ monthly Consumers Price Index.")
+    parser = argparse.ArgumentParser(description="Collect the official Stats NZ quarterly Consumers Price Index.")
     parser.add_argument("--log-level", default=LOG_LEVEL)
     parser.add_argument("--start-date", type=date.fromisoformat, default=None)
     return parser.parse_args(argv)
@@ -76,15 +80,37 @@ def main(args: argparse.Namespace) -> int:
     try:
         init_db(engine)
         start = _start_date(engine, args.start_date)
-        data = collect()
+        try:
+            data = collect()
+            assert data.release is not None and data.source_catalog is not None
+            assert data.source_observations is not None
+            full = SourceData(data.source_observations, data.source_catalog, data.release, data.workbook)
+            weights = parse_base_weights(data.workbook, data.source_catalog)
+        except SourceLayoutError:
+            logger.error("release_status=%s", LAYOUT_CHANGED)
+            raise
+        # Validation reads the complete release; the freshness filter only
+        # decides which index series are written to time_series/metadata.
+        validate_release(full, weights)
         observations = [item for item in data.observations if item.reference_date >= start]
         if not observations:
             raise ValueError(f"CPI source has no observations since {start}")
         collected_at = datetime.now(UTC)
         with engine.begin() as conn:
+            previous = stored_release(conn, sorted(data.catalog))
             result = upsert_time_series(conn, observations, collected_at)
             inserted, updated = upsert_metadata(conn, data.catalog, collected_at)
-        logger.info("observations=%d new=%d revised=%d metadata_inserted=%d metadata_updated=%d", len(observations), result.new_observations, result.new_vintages, inserted, updated)
+            weight_result = upsert_original_weights(conn, weights, collected_at)
+            hierarchy_inserted, hierarchy_updated = upsert_hierarchy(conn, build_hierarchy(data.source_catalog), collected_at)
+            status = classify_release(
+                previous,
+                data.release.published,
+                max(item.reference_date for item in observations),
+                len(result.written_keys) + weight_result.new_weights + weight_result.new_vintages + weight_result.same_day_updates,
+            )
+        logger.info("release_status=%s published=%s page=%s", status, data.release.published, data.release.page_url)
+        logger.info("observations=%d new=%d revised=%d same_day=%d metadata_inserted=%d metadata_updated=%d", len(observations), result.new_observations, result.new_vintages, result.same_day_updates, inserted, updated)
+        logger.info("weights=%s hierarchy_inserted=%d hierarchy_updated=%d", weight_result, hierarchy_inserted, hierarchy_updated)
     finally:
         engine.dispose()
     return 0
