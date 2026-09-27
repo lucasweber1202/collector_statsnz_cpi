@@ -42,7 +42,9 @@ PROD = os.getenv("PROD", "false").lower() in ("1", "true", "yes")
 
 DATABASE_URL = os.getenv("COLLECTOR_DB_URL", "")
 
-DEFAULT_START_DATE = date.fromisoformat(os.getenv("COLLECTOR_START_DATE", "1960-01-01"))
+# The official all-groups series begins in the June 1914 quarter; the default
+# keeps the full published history rather than the template's 1960 floor.
+DEFAULT_START_DATE = date.fromisoformat(os.getenv("COLLECTOR_START_DATE", "1914-01-01"))
 
 REQUEST_TIMEOUT = float(os.getenv("COLLECTOR_HTTP_TIMEOUT", "30"))
 DOWNLOAD_DELAY = float(os.getenv("COLLECTOR_DOWNLOAD_DELAY", "1.0"))
@@ -69,6 +71,8 @@ AKV_SECRET_NAME = os.getenv("AKV_SECRET_NAME", "databricks-token")
 METADATA_TABLE = "metadata"
 TIME_SERIES_TABLE = "time_series"
 LOGS_TABLE = "logs"
+ORIGINAL_WEIGHTS_TABLE = "original_weights"
+HIERARCHY_TABLE = "cpi_hierarchy"
 COUNTRY_CURRENCY = "NZD"
 
 

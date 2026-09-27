@@ -3,11 +3,29 @@
 from __future__ import annotations
 
 import hashlib
+import os
 import subprocess
 from pathlib import Path
 
+import pytest
+
 ROOT = Path(__file__).resolve().parents[1]
-AUTHORITY_SHA = "8e4613b36c2808a7de234934a81bb26f7a22d367"
+# guimasuko/collector_template main after the merge that added AUD and NZD to
+# the metadata.country vocabulary. The protected blobs below were carried over
+# from the previous pin unchanged; test_verbatim_blobs_match_template_checkout
+# re-proves them against a checkout of this exact commit.
+AUTHORITY_SHA = "723f8633bbd367ad9cca0a199e84b10fd355da36"
+# Pins that must never come back: the pre-AUD/NZD template.
+OBSOLETE_AUTHORITIES = frozenset({"8e4613b36c2808a7de234934a81bb26f7a22d367"})
+EXPECTED_COUNTRY = "NZD"
+STALE_PHRASES = (
+    "vocabulary pending",
+    "vocabulary awaits",
+    "awaits upstream template",
+    "pending upstream pr",
+    "pending template pr",
+    "awaits template pr",
+)
 VERBATIM_BLOBS = {
     ".gitignore": "ed2243b8bd19cd8ce7155e1479d09a194a846709",
     "scripts/databricks_engine.py": "73821f7a530ab5cca2f5313180d71c17173e6e59",
@@ -29,11 +47,50 @@ VERBATIM_BLOBS = {
 }
 
 
+def _tracked() -> list[str]:
+    output = subprocess.check_output(["git", "ls-files", "-z"], cwd=ROOT).decode()
+    return [path for path in output.split("\0") if path]
+
+
 def test_verbatim_blobs() -> None:
-    """Protect Git blob identity against the pinned template commit."""
+    """Protect Git blob identity of every file copied verbatim from the template."""
     for path, expected in VERBATIM_BLOBS.items():
         data = (ROOT / path).read_bytes()
         assert hashlib.sha1(f"blob {len(data)}\0".encode() + data).hexdigest() == expected, path
+
+
+@pytest.mark.skipif(not os.getenv("MASUKO_TEMPLATE_DIR"), reason="set MASUKO_TEMPLATE_DIR to a guimasuko/collector_template clone")
+def test_verbatim_blobs_match_template_checkout() -> None:
+    """Re-derive each protected blob from the authority commit itself."""
+    template = os.environ["MASUKO_TEMPLATE_DIR"]
+    for path, expected in VERBATIM_BLOBS.items():
+        blob = subprocess.check_output(["git", "-C", template, "rev-parse", f"{AUTHORITY_SHA}:{path}"]).decode().strip()
+        assert blob == expected, path
+
+
+def test_authority_is_current_everywhere() -> None:
+    """No tracked file may cite an obsolete pin or call AUD/NZD pending."""
+    assert AUTHORITY_SHA not in OBSOLETE_AUTHORITIES
+    assert len(AUTHORITY_SHA) == 40 and int(AUTHORITY_SHA, 16) >= 0
+    this_file = Path(__file__).resolve().relative_to(ROOT).as_posix()
+    for path in _tracked():
+        if path == this_file or path in VERBATIM_BLOBS:
+            continue
+        try:
+            text = (ROOT / path).read_text(encoding="utf-8")
+        except (UnicodeDecodeError, IsADirectoryError):
+            continue
+        for obsolete in OBSOLETE_AUTHORITIES:
+            assert obsolete not in text, f"{path} cites obsolete authority {obsolete}"
+        lowered = text.lower()
+        for phrase in STALE_PHRASES:
+            assert phrase not in lowered, f"{path} still says '{phrase}'"
+
+
+def test_country_uses_the_template_currency_code() -> None:
+    from scripts import config
+
+    assert config.COUNTRY_CURRENCY == EXPECTED_COUNTRY
 
 
 def test_standalone_and_no_raw() -> None:
@@ -46,5 +103,4 @@ def test_standalone_and_no_raw() -> None:
         assert "..\\collector_" not in source
         assert "sys.path" not in source
     forbidden = {".xlsx", ".xls", ".ods", ".csv", ".parquet"}
-    tracked = subprocess.check_output(["git", "ls-files", "-z"], cwd=ROOT).decode().split("\0")
-    assert not [p for p in tracked if Path(p).suffix.lower() in forbidden]
+    assert not [p for p in _tracked() if Path(p).suffix.lower() in forbidden]

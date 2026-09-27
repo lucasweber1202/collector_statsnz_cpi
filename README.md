@@ -1,6 +1,10 @@
-# Stats NZ quarterly CPI target collector (work in progress)
+# Stats NZ quarterly CPI target collector
 
-Standalone Python 3.11 collector of official quarterly CPI index numbers, including the all-groups target and published group, subgroup, and class levels. It stores source-native IDs, historical index levels, vintages, metadata, and run logs using the canonical collector schema.
+Standalone Python 3.11 collector of the official Stats NZ quarterly CPI: all
+groups plus every published group, subgroup and class index level, the official
+Table 8 base expenditure weights and the CPI hierarchy. Writes `metadata`,
+`time_series`, `logs`, `original_weights` and `cpi_hierarchy` in schema
+`collector_statsnz_cpi`.
 
 ```bash
 python -m venv .venv
@@ -8,6 +12,12 @@ python -m venv .venv
 COLLECTOR_DB_URL=postgresql+psycopg2://user:password@localhost:5432/database .venv/bin/python main.py
 ```
 
-See `METHODOLOGY.md` for source, scope, and remaining forecast-target requirements. Production uses `PROD=true` and the usual Databricks/Key Vault settings.
+Production uses `PROD=true` and the usual Databricks/Key Vault settings.
 
-The source base-weight/hierarchy validation export is available with `python -m scripts.export_validation_xlsx --output validation.xlsx`. It is an analyst review artifact, not yet a persisted `weights` table or a verified CPI aggregation.
+Tests: `pytest` (Spark grammar needs `java`). Add
+`COLLECTOR_TEST_PG_URL=<disposable PostgreSQL URL>` for the PostgreSQL write
+paths and `CPI_LIVE_SMOKE=1` for the live official release check.
+
+See `METHODOLOGY.md` for source, validation, release monitoring and
+point-in-time rules. Analyst workbook:
+`python -m scripts.export_validation_xlsx --output validation.xlsx`.

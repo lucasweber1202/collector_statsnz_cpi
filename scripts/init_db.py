@@ -46,12 +46,42 @@ CREATE TABLE IF NOT EXISTS {SCHEMA_NAME}.logs (
     CONSTRAINT pk_logs PRIMARY KEY (id)
 )"""
 
+# Approved target exception (as in the UK CPI target): the official Table 8
+# base expenditure weights, stored unmodified, and the published hierarchy.
+CREATE_ORIGINAL_WEIGHTS_TABLE = f"""
+CREATE TABLE IF NOT EXISTS {SCHEMA_NAME}.original_weights (
+    series_id VARCHAR(200) NOT NULL,
+    reference_date DATE NOT NULL,
+    vintage_date DATE NOT NULL,
+    weight {{double_type}} NOT NULL,
+    weight_base_year INTEGER NOT NULL,
+    collected_at TIMESTAMP NOT NULL,
+    CONSTRAINT pk_original_weights PRIMARY KEY (series_id, reference_date, vintage_date)
+)"""
+CREATE_HIERARCHY_TABLE = f"""
+CREATE TABLE IF NOT EXISTS {SCHEMA_NAME}.cpi_hierarchy (
+    series_id VARCHAR(200) NOT NULL,
+    native_code VARCHAR(50) NOT NULL,
+    parent_id VARCHAR(200),
+    level INTEGER NOT NULL,
+    name VARCHAR(500) NOT NULL,
+    collected_at TIMESTAMP NOT NULL,
+    CONSTRAINT pk_cpi_hierarchy PRIMARY KEY (series_id)
+)"""
+
 
 def init_db(engine: Engine) -> None:
     """Create the schema and tables idempotently."""
     double_type = "DOUBLE PRECISION" if engine.dialect.name == "postgresql" else "DOUBLE"
     with engine.begin() as conn:
-        for statement in (CREATE_SCHEMA, CREATE_METADATA_TABLE, CREATE_TIME_SERIES_TABLE.format(double_type=double_type), CREATE_LOGS_TABLE):
+        for statement in (
+            CREATE_SCHEMA,
+            CREATE_METADATA_TABLE,
+            CREATE_TIME_SERIES_TABLE.format(double_type=double_type),
+            CREATE_LOGS_TABLE,
+            CREATE_ORIGINAL_WEIGHTS_TABLE.format(double_type=double_type),
+            CREATE_HIERARCHY_TABLE,
+        ):
             conn.execute(text(statement))
 
 
