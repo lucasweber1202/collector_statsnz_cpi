@@ -25,13 +25,37 @@ COUNTRY_CURRENCY = "NZD"
 SOURCE_ROOT = "https://www.stats.govt.nz"
 MAX_STALE_MONTHS = 6
 MIN_HISTORY_YEARS = 3
+MIN_PAYLOAD_BYTES = {"csv": 100_000, "xlsx": 20_000}
+MIN_SOURCE_ROWS = 20_000
 FIELDS = {"Series_reference", "Period", "Data_value", "STATUS", "UNITS", "Group", "Series_title_1", "Series_title_2", "Subject"}
+
+
+class SourceLayoutError(ValueError):
+    """The official release page or file no longer has the audited layout."""
+
+
+class SourceAccessError(RuntimeError):
+    """The source answered with something other than the requested file."""
+
+
+@dataclass(frozen=True)
+class Release:
+    """Official identity of one quarterly CPI release, taken from its page."""
+
+    page_url: str
+    published: date
+    csv_url: str
+    workbook_url: str
 
 
 @dataclass(frozen=True)
 class SourceData:
     observations: list[Observation]
     catalog: dict[str, dict[str, Any]]
+    release: Release | None = None
+    workbook: bytes = b""
+    source_catalog: dict[str, dict[str, Any]] | None = None
+    source_observations: list[Observation] | None = None
 
 
 def build_series_id(native: str) -> str:
@@ -51,8 +75,8 @@ def parse_series_id(series_id: str) -> str:
     return native
 
 
-def discover_csv(client: httpx.Client, today: date) -> tuple[str, date, str]:
-    """Find the latest quarterly index-level CSV, not a hardcoded release."""
+def discover_release(client: httpx.Client, today: date) -> Release:
+    """Find the latest quarterly release page and its official download links."""
     for offset in range(5):
         index = today.year * 12 + today.month - 1 - offset * 3
         year, month0 = divmod(index, 12)
@@ -62,24 +86,61 @@ def discover_csv(client: httpx.Client, today: date) -> tuple[str, date, str]:
         if response.status_code == 404:
             continue
         response.raise_for_status()
-        markup = html.unescape(response.text)
-        match = re.search(r'"DocumentLink":"([^"]+-index-numbers\.csv)"', markup, re.IGNORECASE)
-        published = re.search(r'"PublicationDate":"(\d{4}-\d{2}-\d{2})', markup)
-        if not match or not published:
-            raise ValueError(f"Stats NZ release layout changed: {page}")
-        return urljoin(SOURCE_ROOT, match.group(1).replace("\\/", "/")), date.fromisoformat(published.group(1)), page
-    raise ValueError("No recent official CPI release found")
+        return parse_release_page(response.text, page)
+    raise SourceAccessError("No recent official CPI release found")
 
 
-def parse_csv(blob: bytes, url: str, published: date) -> SourceData:
+def parse_release_page(markup: str, page: str) -> Release:
+    """Read the publication date and the two audited files from a release page."""
+    text = html.unescape(markup)
+    csv_link = re.search(r'"DocumentLink":"([^"]+-index-numbers\.csv)"', text, re.IGNORECASE)
+    book_link = re.search(r'"DocumentLink":"([^"]+-quarter\.xlsx)"', text, re.IGNORECASE)
+    published = re.search(r'"PublicationDate":"(\d{4}-\d{2}-\d{2})', text)
+    if not csv_link or not book_link or not published:
+        raise SourceLayoutError(f"Stats NZ release layout changed: {page}")
+    return Release(
+        page,
+        date.fromisoformat(published.group(1)),
+        urljoin(SOURCE_ROOT, csv_link.group(1).replace("\\/", "/")),
+        urljoin(SOURCE_ROOT, book_link.group(1).replace("\\/", "/")),
+    )
+
+
+def discover_csv(client: httpx.Client, today: date) -> tuple[str, date, str]:
+    """Backward-compatible view of the release: CSV URL, publication date, page."""
+    release = discover_release(client, today)
+    return release.csv_url, release.published, release.page_url
+
+
+def check_payload(response: httpx.Response, kind: str) -> bytes:
+    """Refuse an HTML challenge or error page before it can be parsed as data."""
+    response.raise_for_status()
+    blob = response.content
+    content_type = response.headers.get("content-type", "").lower()
+    head = blob[:512].lstrip().lower()
+    if "text/html" in content_type or head.startswith((b"<!doctype", b"<html")):
+        raise SourceAccessError(f"Stats NZ returned HTML instead of {kind}: {response.url}")
+    if kind == "xlsx" and not blob.startswith(b"PK\x03\x04"):
+        raise SourceAccessError(f"Stats NZ workbook is not an XLSX file: {response.url}")
+    if kind == "csv" and not blob.removeprefix(b"\xef\xbb\xbf").lstrip(b'"').startswith(b"Series_reference"):
+        raise SourceLayoutError(f"Stats NZ CSV does not start with the audited header: {response.url}")
+    if len(blob) < MIN_PAYLOAD_BYTES[kind]:
+        raise SourceAccessError(f"Stats NZ {kind} is implausibly small ({len(blob)} bytes)")
+    return blob
+
+
+def parse_csv(blob: bytes, url: str, published: date, min_rows: int = MIN_SOURCE_ROWS) -> SourceData:
     """Parse finite index levels, native metadata, and quarterly period ends."""
     reader = csv.DictReader(io.StringIO(blob.decode("utf-8-sig")))
     if not reader.fieldnames or not FIELDS.issubset(reader.fieldnames):
-        raise ValueError("CPI CSV header changed")
+        raise SourceLayoutError("CPI CSV header changed")
     catalog: dict[str, dict[str, Any]] = {}
     observations: list[Observation] = []
+    seen: set[tuple[str, date]] = set()
     snapshot = hashlib.sha256(blob).hexdigest()
+    rows = 0
     for row in reader:
+        rows += 1
         group = row["Group"]
         if row["UNITS"] != "Index" or row["Subject"] != "CPI" or not group.startswith("CPI "):
             continue
@@ -109,10 +170,15 @@ def parse_csv(blob: bytes, url: str, published: date) -> SourceData:
             raise ValueError(f"Invalid CPI value {raw!r} for {sid}") from exc
         if not math.isfinite(value) or value < 0 or row["STATUS"] not in {"FINAL", "REVISED", "PROVISIONAL"}:
             raise ValueError(f"Invalid CPI value/status for {sid} on {ref}")
+        if (sid, ref) in seen:
+            raise ValueError(f"Duplicate CPI economic key: {sid} {ref}")
+        seen.add((sid, ref))
         if value > 0:  # Official historical zero placeholders denote unavailable periods.
             observations.append(Observation(sid, ref, value, snapshot))
     if not observations or not any(o.series_id == "STATSNZ_CPI_CPIQ_SE9A" for o in observations):
-        raise ValueError("Official all-groups CPI observations missing")
+        raise SourceLayoutError("Official all-groups CPI observations missing")
+    if rows < min_rows:
+        raise SourceLayoutError(f"CPI CSV has {rows} rows; expected at least {min_rows}")
     observed = {o.series_id for o in observations}
     return SourceData(observations, {sid: v for sid, v in catalog.items() if sid in observed})
 
@@ -137,11 +203,18 @@ def filter_usable_series(data: SourceData, today: date) -> SourceData:
 
 
 def collect() -> SourceData:
-    """Retrieve the current official CSV and filter series before storage."""
+    """Retrieve the current release's CSV and weight workbook, then filter series.
+
+    ``catalog``/``observations`` are the filtered series written to metadata and
+    time_series. ``source_catalog``/``source_observations`` keep the complete
+    parsed release, because official weights, the hierarchy and the validation
+    describe series that the freshness filter may drop.
+    """
     with httpx.Client(timeout=REQUEST_TIMEOUT, headers={"User-Agent": USER_AGENT}) as client:
-        url, published, page = discover_csv(client, datetime.now(UTC).date())
-        response = client.get(url)
-        response.raise_for_status()
-    parsed = parse_csv(response.content, url, published)
-    logger.info("%s: %d candidate series and %d observations", page, len(parsed.catalog), len(parsed.observations))
-    return filter_usable_series(parsed, datetime.now(UTC).date())
+        release = discover_release(client, datetime.now(UTC).date())
+        blob = check_payload(client.get(release.csv_url), "csv")
+        workbook = check_payload(client.get(release.workbook_url), "xlsx")
+    parsed = parse_csv(blob, release.csv_url, release.published)
+    usable = filter_usable_series(parsed, datetime.now(UTC).date())
+    logger.info("%s: %d source series, %d usable, %d observations", release.page_url, len(parsed.catalog), len(usable.catalog), len(usable.observations))
+    return SourceData(usable.observations, usable.catalog, release, workbook, parsed.catalog, parsed.observations)
