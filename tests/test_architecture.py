@@ -27,7 +27,7 @@ STALE_PHRASES = (
     "awaits template pr",
 )
 VERBATIM_BLOBS = {
-    ".gitignore": "ed2243b8bd19cd8ce7155e1479d09a194a846709",
+    ".gitignore": "f0d1368264d24d7959d3137d618930a06f33795e",
     "scripts/databricks_engine.py": "73821f7a530ab5cca2f5313180d71c17173e6e59",
     ".vscode/launch.json": "430b80db4450110af11567b260fa4658f12c1f62",
     ".vscode/settings.json": "0facdc9526ed15fae0c85ec6434d9248c73ab84f",
