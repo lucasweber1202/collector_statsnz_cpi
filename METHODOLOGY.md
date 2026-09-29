@@ -100,7 +100,7 @@ that goes backwards fails the run. The status is written to the run log.
 - Stats NZ publishes the current history only; earlier release snapshots are
   not available from this source, so no historical vintage is reconstructed.
   Later changes become new vintages; a same-day change overwrites that day's
-  vintage (template rule). Revisions older than the 9-month look-back are not
+  vintage (template rule). Revisions older than the 5-month look-back are not
   re-read on incremental runs.
 
 ## Verification (2026-09-27)
