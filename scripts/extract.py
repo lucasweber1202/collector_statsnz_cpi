@@ -20,6 +20,12 @@ import httpx
 from scripts.config import REQUEST_TIMEOUT, USER_AGENT
 from scripts.time_series import Observation
 
+# Canonical metadata vocabulary produced by this source.
+FREQUENCIES: frozenset[str] = frozenset({"quarterly"})
+UNITS: frozenset[str] = frozenset({"index"})
+ECO_GROUPS: frozenset[str] = frozenset({"consumer_prices"})
+
+
 logger = logging.getLogger(__name__)
 COUNTRY_CURRENCY = "NZD"
 SOURCE_ROOT = "https://www.stats.govt.nz"
