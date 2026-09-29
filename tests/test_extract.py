@@ -1,4 +1,5 @@
 """Validate native IDs, payload checks, placeholder handling and the live release."""
+
 import os
 from datetime import date
 
@@ -16,7 +17,9 @@ from scripts.extract import (
     parse_series_id,
 )
 
-HEADER = b"Series_reference,Period,Data_value,STATUS,UNITS,Subject,Group,Series_title_1,Series_title_2\n"
+HEADER = (
+    b"Series_reference,Period,Data_value,STATUS,UNITS,Subject,Group,Series_title_1,Series_title_2\n"
+)
 
 
 def test_native_id_roundtrip() -> None:
@@ -26,7 +29,10 @@ def test_native_id_roundtrip() -> None:
 
 
 def test_zero_placeholder_is_not_observation() -> None:
-    source = HEADER + b'CPIQ.SE9A,1914.06,12,FINAL,Index,CPI,CPI All Groups for New Zealand,All groups,NA\nCPIQ.SE9A,1914.09,0,FINAL,Index,CPI,CPI All Groups for New Zealand,All groups,NA\n'
+    source = (
+        HEADER
+        + b"CPIQ.SE9A,1914.06,12,FINAL,Index,CPI,CPI All Groups for New Zealand,All groups,NA\nCPIQ.SE9A,1914.09,0,FINAL,Index,CPI,CPI All Groups for New Zealand,All groups,NA\n"
+    )
     result = parse_csv(source, "https://www.stats.govt.nz/test.csv", date(2026, 7, 21), min_rows=1)
     assert len(result.observations) == 1
     assert result.observations[0].value == 12
@@ -48,14 +54,23 @@ def test_changed_header_is_a_layout_error() -> None:
 
 
 def _response(body: bytes, content_type: str) -> httpx.Response:
-    return httpx.Response(200, content=body, headers={"content-type": content_type}, request=httpx.Request("GET", "https://www.stats.govt.nz/f"))
+    return httpx.Response(
+        200,
+        content=body,
+        headers={"content-type": content_type},
+        request=httpx.Request("GET", "https://www.stats.govt.nz/f"),
+    )
 
 
 def test_payload_check_rejects_html_and_wrong_magic() -> None:
     with pytest.raises(SourceAccessError, match="HTML"):
-        check_payload(_response(b"<!DOCTYPE html><title>Pardon Our Interruption</title>", "text/html"), "csv")
+        check_payload(
+            _response(b"<!DOCTYPE html><title>Pardon Our Interruption</title>", "text/html"), "csv"
+        )
     with pytest.raises(SourceAccessError, match="HTML"):
-        check_payload(_response(b"<html>challenge</html>" * 10000, "application/octet-stream"), "xlsx")
+        check_payload(
+            _response(b"<html>challenge</html>" * 10000, "application/octet-stream"), "xlsx"
+        )
     with pytest.raises(SourceAccessError, match="not an XLSX"):
         check_payload(_response(b"x" * 30000, "application/octet-stream"), "xlsx")
     with pytest.raises(SourceLayoutError, match="header"):
@@ -73,7 +88,9 @@ def test_release_page_needs_both_files_and_a_publication_date() -> None:
     assert release.csv_url == "https://www.stats.govt.nz/a/cpi-june-2026-quarter-index-numbers.csv"
     assert release.workbook_url.endswith("consumers-price-index-june-2026-quarter.xlsx")
     with pytest.raises(SourceLayoutError):
-        parse_release_page(markup.replace("PublicationDate", "Date"), "https://www.stats.govt.nz/p/")
+        parse_release_page(
+            markup.replace("PublicationDate", "Date"), "https://www.stats.govt.nz/p/"
+        )
 
 
 @pytest.mark.skipif(os.getenv("CPI_LIVE_SMOKE") != "1", reason="opt-in official network smoke")
@@ -83,11 +100,24 @@ def test_official_release_validates_end_to_end() -> None:
     from scripts.weight_sources import parse_base_weights
 
     result = collect()
-    assert result.release is not None and result.source_catalog is not None and result.source_observations is not None
-    selected = {o.reference_date: o.value for o in result.observations if o.series_id == build_series_id("CPIQ.SE9A")}
+    assert (
+        result.release is not None
+        and result.source_catalog is not None
+        and result.source_observations is not None
+    )
+    selected = {
+        o.reference_date: o.value
+        for o in result.observations
+        if o.series_id == build_series_id("CPIQ.SE9A")
+    }
     assert selected[date(2026, 6, 30)] == 1359
     assert selected[date(2026, 3, 31)] == 1339
     assert len(result.source_catalog) == 164
     weights = parse_base_weights(result.workbook, result.source_catalog)
-    report = validate_release(SourceData(result.source_observations, result.source_catalog, result.release, result.workbook), weights)
+    report = validate_release(
+        SourceData(
+            result.source_observations, result.source_catalog, result.release, result.workbook
+        ),
+        weights,
+    )
     assert report.inherited_weight_series == 14 and report.max_aggregation_error < 0.001

@@ -1,6 +1,6 @@
 # Stats NZ CPI target collector — methodology
 
-Authority: `guimasuko/collector_template` main `723f8633bbd367ad9cca0a199e84b10fd355da36`
+Authority: `guimasuko/collector_template` main `4bc65765cedd9c14aec196cff382df6dfb318c77`
 (AUD/NZD are part of its `metadata.country` vocabulary). This repository emits
 `country = NZD`.
 
@@ -116,3 +116,7 @@ that goes backwards fails the run. The status is written to the run log.
   **Databricks corporate runtime: not verified.**
 - Spot checks against raw CSV rows (first, middle, last, random) for all
   groups, food, household energy, electricity and second-hand cars: exact.
+
+## Masuko authority verification
+
+Pinned authority: `guimasuko/collector_template@4bc65765cedd9c14aec196cff382df6dfb318c77`. Physical `.github/` and `.vscode/` paths are checked against Git blobs. `.gitignore` and `scripts/databricks_engine.py` have no physical path in the template tree; they are canonical fenced blocks in `GUIDELINES.md` sections 8.1 and 8.9. The guideline Git blob is `089fbbca6a2241d3f02777b82631fbf81d49f6e0`; the two derived file blobs are `f0d1368264d24d7959d3137d618930a06f33795e` and `73821f7a530ab5cca2f5313180d71c17173e6e59`. `tests/test_architecture.py` checks all local blobs on every run. For independent source derivation, check out the exact authority commit and run `MASUKO_TEMPLATE_DIR=/path/to/collector_template python -m pytest -q tests/test_architecture.py`. This checks the guideline blob, extracts both fenced blocks and checks their hashes.

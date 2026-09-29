@@ -7,16 +7,14 @@ import os
 import subprocess
 from pathlib import Path
 
-import pytest
-
 ROOT = Path(__file__).resolve().parents[1]
-# guimasuko/collector_template main after the merge that added AUD and NZD to
-# the metadata.country vocabulary. The protected blobs below were carried over
-# from the previous pin unchanged; test_verbatim_blobs_match_template_checkout
-# re-proves them against a checkout of this exact commit.
-AUTHORITY_SHA = "723f8633bbd367ad9cca0a199e84b10fd355da36"
+# Masuko's current authority: physical files in the Git tree and
+# canonical fenced sections 8.1 and 8.9 in GUIDELINES.md.
+AUTHORITY_SHA = "4bc65765cedd9c14aec196cff382df6dfb318c77"
 # Pins that must never come back: the pre-AUD/NZD template.
-OBSOLETE_AUTHORITIES = frozenset({"8e4613b36c2808a7de234934a81bb26f7a22d367"})
+OBSOLETE_AUTHORITIES = frozenset(
+    {"8e4613b36c2808a7de234934a81bb26f7a22d367", "723f8633bbd367ad9cca0a199e84b10fd355da36"}
+)
 EXPECTED_COUNTRY = "NZD"
 STALE_PHRASES = (
     "vocabulary pending",
@@ -26,9 +24,13 @@ STALE_PHRASES = (
     "pending template pr",
     "awaits template pr",
 )
-VERBATIM_BLOBS = {
+# Section 8.1 and 8.9 canonical code blocks are not physical template paths.
+GUIDELINES_BLOB = "089fbbca6a2241d3f02777b82631fbf81d49f6e0"
+GUIDELINE_SECTION_BLOBS = {
     ".gitignore": "f0d1368264d24d7959d3137d618930a06f33795e",
     "scripts/databricks_engine.py": "73821f7a530ab5cca2f5313180d71c17173e6e59",
+}
+VERBATIM_BLOBS = {
     ".vscode/launch.json": "430b80db4450110af11567b260fa4658f12c1f62",
     ".vscode/settings.json": "0facdc9526ed15fae0c85ec6434d9248c73ab84f",
     ".github/copilot-instructions.md": "d58921719c9cf0fd8cf442f46d1b9b21113d28a0",
@@ -59,13 +61,41 @@ def test_verbatim_blobs() -> None:
         assert hashlib.sha1(f"blob {len(data)}\0".encode() + data).hexdigest() == expected, path
 
 
-@pytest.mark.skipif(not os.getenv("MASUKO_TEMPLATE_DIR"), reason="set MASUKO_TEMPLATE_DIR to a guimasuko/collector_template clone")
-def test_verbatim_blobs_match_template_checkout() -> None:
-    """Re-derive each protected blob from the authority commit itself."""
-    template = os.environ["MASUKO_TEMPLATE_DIR"]
+def test_verbatim_authority() -> None:
+    """Always check local blobs; rederive source blocks when a template is supplied."""
+    for path, expected in {**VERBATIM_BLOBS, **GUIDELINE_SECTION_BLOBS}.items():
+        data = (ROOT / path).read_bytes()
+        assert hashlib.sha1(f"blob {len(data)}\0".encode() + data).hexdigest() == expected, path
+
+    template = os.getenv("MASUKO_TEMPLATE_DIR")
+    if template is None:
+        return  # Local hashes still gate every test run. Source proof: set the variable.
     for path, expected in VERBATIM_BLOBS.items():
-        blob = subprocess.check_output(["git", "-C", template, "rev-parse", f"{AUTHORITY_SHA}:{path}"]).decode().strip()
+        blob = subprocess.check_output(
+            ["git", "-C", template, "rev-parse", f"{AUTHORITY_SHA}:{path}"], text=True
+        ).strip()
         assert blob == expected, path
+    guideline = subprocess.check_output(
+        ["git", "-C", template, "show", f"{AUTHORITY_SHA}:GUIDELINES.md"]
+    )
+    assert (
+        hashlib.sha1(f"blob {len(guideline)}\0".encode() + guideline).hexdigest() == GUIDELINES_BLOB
+    )
+    text = guideline.decode("utf-8")
+    for heading, path in (
+        ("### 8.1 `.gitignore`", ".gitignore"),
+        ("### 8.9 `scripts/databricks_engine.py`", "scripts/databricks_engine.py"),
+    ):
+        section = text.split(heading, 1)[1].split("```", 2)[1]
+        if path == ".gitignore":
+            section = section.removeprefix("\n")
+        else:
+            section = section.removeprefix("python\n")
+        data = section.encode("utf-8")
+        assert (
+            hashlib.sha1(f"blob {len(data)}\0".encode() + data).hexdigest()
+            == GUIDELINE_SECTION_BLOBS[path]
+        )
 
 
 def test_authority_is_current_everywhere() -> None:
@@ -74,7 +104,7 @@ def test_authority_is_current_everywhere() -> None:
     assert len(AUTHORITY_SHA) == 40 and int(AUTHORITY_SHA, 16) >= 0
     this_file = Path(__file__).resolve().relative_to(ROOT).as_posix()
     for path in _tracked():
-        if path == this_file or path in VERBATIM_BLOBS:
+        if path == this_file or path in VERBATIM_BLOBS or path in GUIDELINE_SECTION_BLOBS:
             continue
         try:
             text = (ROOT / path).read_text(encoding="utf-8")

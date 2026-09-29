@@ -27,7 +27,17 @@ MAX_STALE_MONTHS = 6
 MIN_HISTORY_YEARS = 3
 MIN_PAYLOAD_BYTES = {"csv": 100_000, "xlsx": 20_000}
 MIN_SOURCE_ROWS = 20_000
-FIELDS = {"Series_reference", "Period", "Data_value", "STATUS", "UNITS", "Group", "Series_title_1", "Series_title_2", "Subject"}
+FIELDS = {
+    "Series_reference",
+    "Period",
+    "Data_value",
+    "STATUS",
+    "UNITS",
+    "Group",
+    "Series_title_1",
+    "Series_title_2",
+    "Subject",
+}
 
 
 class SourceLayoutError(ValueError):
@@ -122,14 +132,20 @@ def check_payload(response: httpx.Response, kind: str) -> bytes:
         raise SourceAccessError(f"Stats NZ returned HTML instead of {kind}: {response.url}")
     if kind == "xlsx" and not blob.startswith(b"PK\x03\x04"):
         raise SourceAccessError(f"Stats NZ workbook is not an XLSX file: {response.url}")
-    if kind == "csv" and not blob.removeprefix(b"\xef\xbb\xbf").lstrip(b'"').startswith(b"Series_reference"):
-        raise SourceLayoutError(f"Stats NZ CSV does not start with the audited header: {response.url}")
+    if kind == "csv" and not blob.removeprefix(b"\xef\xbb\xbf").lstrip(b'"').startswith(
+        b"Series_reference"
+    ):
+        raise SourceLayoutError(
+            f"Stats NZ CSV does not start with the audited header: {response.url}"
+        )
     if len(blob) < MIN_PAYLOAD_BYTES[kind]:
         raise SourceAccessError(f"Stats NZ {kind} is implausibly small ({len(blob)} bytes)")
     return blob
 
 
-def parse_csv(blob: bytes, url: str, published: date, min_rows: int = MIN_SOURCE_ROWS) -> SourceData:
+def parse_csv(
+    blob: bytes, url: str, published: date, min_rows: int = MIN_SOURCE_ROWS
+) -> SourceData:
     """Parse finite index levels, native metadata, and quarterly period ends."""
     reader = csv.DictReader(io.StringIO(blob.decode("utf-8-sig")))
     if not reader.fieldnames or not FIELDS.issubset(reader.fieldnames):
@@ -145,12 +161,19 @@ def parse_csv(blob: bytes, url: str, published: date, min_rows: int = MIN_SOURCE
         if row["UNITS"] != "Index" or row["Subject"] != "CPI" or not group.startswith("CPI "):
             continue
         sid = build_series_id(row["Series_reference"])
-        titles = [v for key in ("Series_title_1", "Series_title_2") if (v := row[key]) not in ("", "NA")]
-        descriptor = {"name": " / ".join(titles) or row["Series_reference"],
-                      "description": f"Stats NZ CPI {group}; official code {row['Series_reference']}",
-                      "country": COUNTRY_CURRENCY, "frequency": "quarterly", "unit": "index",
-                      "eco_group": "consumer_prices", "source_url": url,
-                      "last_publish_date": published}
+        titles = [
+            v for key in ("Series_title_1", "Series_title_2") if (v := row[key]) not in ("", "NA")
+        ]
+        descriptor = {
+            "name": " / ".join(titles) or row["Series_reference"],
+            "description": f"Stats NZ CPI {group}; official code {row['Series_reference']}",
+            "country": COUNTRY_CURRENCY,
+            "frequency": "quarterly",
+            "unit": "index",
+            "eco_group": "consumer_prices",
+            "source_url": url,
+            "last_publish_date": published,
+        }
         if sid in catalog and catalog[sid] != descriptor:
             raise ValueError(f"Metadata conflict: {sid}")
         catalog[sid] = descriptor
@@ -168,7 +191,11 @@ def parse_csv(blob: bytes, url: str, published: date, min_rows: int = MIN_SOURCE
             value = float(raw)
         except ValueError as exc:
             raise ValueError(f"Invalid CPI value {raw!r} for {sid}") from exc
-        if not math.isfinite(value) or value < 0 or row["STATUS"] not in {"FINAL", "REVISED", "PROVISIONAL"}:
+        if (
+            not math.isfinite(value)
+            or value < 0
+            or row["STATUS"] not in {"FINAL", "REVISED", "PROVISIONAL"}
+        ):
             raise ValueError(f"Invalid CPI value/status for {sid} on {ref}")
         if (sid, ref) in seen:
             raise ValueError(f"Duplicate CPI economic key: {sid} {ref}")
@@ -199,7 +226,10 @@ def filter_usable_series(data: SourceData, today: date) -> SourceData:
             logger.info("Dropped %s: stale=%d months, history=%d months", sid, stale, history)
     if not keep:
         raise ValueError("No usable CPI series")
-    return SourceData([o for o in data.observations if o.series_id in keep], {s: v for s, v in data.catalog.items() if s in keep})
+    return SourceData(
+        [o for o in data.observations if o.series_id in keep],
+        {s: v for s, v in data.catalog.items() if s in keep},
+    )
 
 
 def collect() -> SourceData:
@@ -216,5 +246,13 @@ def collect() -> SourceData:
         workbook = check_payload(client.get(release.workbook_url), "xlsx")
     parsed = parse_csv(blob, release.csv_url, release.published)
     usable = filter_usable_series(parsed, datetime.now(UTC).date())
-    logger.info("%s: %d source series, %d usable, %d observations", release.page_url, len(parsed.catalog), len(usable.catalog), len(usable.observations))
-    return SourceData(usable.observations, usable.catalog, release, workbook, parsed.catalog, parsed.observations)
+    logger.info(
+        "%s: %d source series, %d usable, %d observations",
+        release.page_url,
+        len(parsed.catalog),
+        len(usable.catalog),
+        len(usable.observations),
+    )
+    return SourceData(
+        usable.observations, usable.catalog, release, workbook, parsed.catalog, parsed.observations
+    )
