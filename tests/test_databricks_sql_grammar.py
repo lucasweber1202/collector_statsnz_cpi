@@ -47,8 +47,12 @@ def statements() -> list[str]:
             metadata._merge_statement(count),
             time_series._insert_statement(count),
             time_series._merge_statement(count),
-            original_weights._insert_statement(original_weights._WEIGHTS, original_weights._WEIGHT_COLUMNS, count),
-            original_weights._insert_statement(original_weights._HIERARCHY, original_weights._HIERARCHY_COLUMNS, count),
+            original_weights._insert_statement(
+                original_weights._WEIGHTS, original_weights._WEIGHT_COLUMNS, count
+            ),
+            original_weights._insert_statement(
+                original_weights._HIERARCHY, original_weights._HIERARCHY_COLUMNS, count
+            ),
             original_weights.weight_merge_statement(count),
             original_weights.hierarchy_merge_statement(count),
         ]

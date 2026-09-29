@@ -139,7 +139,9 @@ def validate_weights(weights: list[BaseWeight], catalog: dict[str, dict[str, Any
         rounding = 0.005 * (len(kids) + 1) + 1e-9
         gap = stated - total
         if gap < -rounding:
-            raise TargetValidationError(f"Children of {parent} exceed it at {base}: {total:.2f} > {stated:.2f}")
+            raise TargetValidationError(
+                f"Children of {parent} exceed it at {base}: {total:.2f} > {stated:.2f}"
+            )
         if gap > rounding:
             known = KNOWN_UNPUBLISHED_COMPONENTS.get((parent, base))
             if known is None or abs(known - gap) > rounding:
@@ -156,7 +158,9 @@ def validate_weights(weights: list[BaseWeight], catalog: dict[str, dict[str, Any
             continue
         owner = parent_id(_native(sid))
         if owner is None or owner not in weighted or len(index_children[owner]) != 1:
-            raise TargetValidationError(f"{sid} has no Table 8 weight and is not its parent's only child")
+            raise TargetValidationError(
+                f"{sid} has no Table 8 weight and is not its parent's only child"
+            )
         inherited += 1
     return inherited
 
@@ -181,7 +185,10 @@ def validate_aggregation(
                 continue
             try:
                 relative = sum(
-                    w.headline_share / total * index[(w.series_id, quarter)] / index[(w.series_id, base)]
+                    w.headline_share
+                    / total
+                    * index[(w.series_id, quarter)]
+                    / index[(w.series_id, base)]
                     for w in groups
                 )
             except KeyError as exc:
@@ -191,7 +198,9 @@ def validate_aggregation(
             pinned = exceptions.get(quarter)
             if pinned is not None:
                 if abs(error - pinned) > 0.00005:
-                    raise TargetValidationError(f"Pinned aggregation gap at {quarter} moved: {error:.5%}")
+                    raise TargetValidationError(
+                        f"Pinned aggregation gap at {quarter} moved: {error:.5%}"
+                    )
                 continue
             worst = max(worst, abs(error))
             if abs(error) > AGGREGATION_TOLERANCE:
@@ -244,7 +253,9 @@ def validate_cross_file(observations: list[Observation], workbook: bytes) -> int
     table = summary_table_points(workbook)
     for key, value in table.items():
         if csv_points.get(key) != value:
-            raise TargetValidationError(f"CSV and workbook disagree at {key}: {csv_points.get(key)} vs {value}")
+            raise TargetValidationError(
+                f"CSV and workbook disagree at {key}: {csv_points.get(key)} vs {value}"
+            )
     return len(table)
 
 

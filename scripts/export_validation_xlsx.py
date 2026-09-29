@@ -1,4 +1,5 @@
 """Export CPI native index catalogue and official expenditure base weights."""
+
 from __future__ import annotations
 
 import argparse
@@ -13,7 +14,9 @@ from scripts.weight_sources import export_validation_workbook, parse_base_weight
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Export official Stats NZ CPI validation workbook.")
+    parser = argparse.ArgumentParser(
+        description="Export official Stats NZ CPI validation workbook."
+    )
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
     with httpx.Client(timeout=REQUEST_TIMEOUT, headers={"User-Agent": USER_AGENT}) as client:

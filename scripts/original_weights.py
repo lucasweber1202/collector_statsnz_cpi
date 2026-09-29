@@ -40,7 +40,14 @@ _HIERARCHY = f"{SCHEMA_NAME}.{HIERARCHY_TABLE}"
 BATCH_SIZE = 500
 ROUND_DECIMALS = 10
 PREFIX = "STATSNZ_CPI_CPIQ_"
-_WEIGHT_COLUMNS = ("series_id", "reference_date", "vintage_date", "weight", "weight_base_year", "collected_at")
+_WEIGHT_COLUMNS = (
+    "series_id",
+    "reference_date",
+    "vintage_date",
+    "weight",
+    "weight_base_year",
+    "collected_at",
+)
 _HIERARCHY_COLUMNS = ("series_id", "native_code", "parent_id", "level", "name", "collected_at")
 _HIERARCHY_COMPARABLE = ("native_code", "parent_id", "level", "name")
 _WEIGHT_MERGE_DIALECTS = frozenset({"databricks"})
@@ -66,7 +73,12 @@ _UPDATE_HIERARCHY_SQL = text(
 
 # See scripts/metadata.py: MERGE source parameters are untyped, so PostgreSQL
 # needs the nullable and date/time columns cast for a NULL to be assignable.
-_WEIGHT_CASTS = {"reference_date": "DATE", "vintage_date": "DATE", "collected_at": "TIMESTAMP", "weight_base_year": "INT"}
+_WEIGHT_CASTS = {
+    "reference_date": "DATE",
+    "vintage_date": "DATE",
+    "collected_at": "TIMESTAMP",
+    "weight_base_year": "INT",
+}
 _HIERARCHY_CASTS = {"parent_id": "VARCHAR(200)", "level": "INT", "collected_at": "TIMESTAMP"}
 
 
@@ -102,7 +114,9 @@ def _source_column(column: str, index: int, casts: dict[str, str]) -> str:
 
 
 def _parameters(rows: list[dict[str, Any]], columns: tuple[str, ...]) -> dict[str, Any]:
-    return {f"{column}_{index}": row[column] for index, row in enumerate(rows) for column in columns}
+    return {
+        f"{column}_{index}": row[column] for index, row in enumerate(rows) for column in columns
+    }
 
 
 def _insert_statement(table: str, columns: tuple[str, ...], count: int) -> TextClause:
@@ -146,7 +160,9 @@ def build_hierarchy(catalog: dict[str, dict[str, Any]]) -> list[HierarchyNode]:
     for series_id, entry in sorted(catalog.items()):
         native = series_id.removeprefix(PREFIX)
         nodes.append(
-            HierarchyNode(series_id, native, parent_id(native), hierarchy_level(native), str(entry["name"]))
+            HierarchyNode(
+                series_id, native, parent_id(native), hierarchy_level(native), str(entry["name"])
+            )
         )
     return nodes
 
@@ -160,8 +176,14 @@ def upsert_original_weights(
     ids = sorted({w.series_id for w in published})
     existing: dict[tuple[str, date], dict[str, Any]] = {}
     for start in range(0, len(ids), 50):
-        rows = conn.execute(_LATEST_WEIGHTS_SQL, {"series_ids": ids[start : start + 50]}).mappings().all()
-        existing.update({(str(r["series_id"]), _as_date(r["reference_date"])): dict(r) for r in rows})
+        rows = (
+            conn.execute(_LATEST_WEIGHTS_SQL, {"series_ids": ids[start : start + 50]})
+            .mappings()
+            .all()
+        )
+        existing.update(
+            {(str(r["series_id"]), _as_date(r["reference_date"])): dict(r) for r in rows}
+        )
     inserts: list[dict[str, Any]] = []
     updates: list[dict[str, Any]] = []
     new_vintages = 0
@@ -177,7 +199,9 @@ def upsert_original_weights(
         current = existing.get((weight.series_id, weight.base_period))
         if current is None:
             inserts.append(row)
-        elif round(float(current["weight"]), ROUND_DECIMALS) == round(weight.percent, ROUND_DECIMALS):
+        elif round(float(current["weight"]), ROUND_DECIMALS) == round(
+            weight.percent, ROUND_DECIMALS
+        ):
             continue
         elif _as_date(current["vintage_date"]) == today:
             updates.append(row)
@@ -186,12 +210,17 @@ def upsert_original_weights(
             new_vintages += 1
     for start in range(0, len(inserts), BATCH_SIZE):
         batch = inserts[start : start + BATCH_SIZE]
-        conn.execute(_insert_statement(_WEIGHTS, _WEIGHT_COLUMNS, len(batch)), _parameters(batch, _WEIGHT_COLUMNS))
+        conn.execute(
+            _insert_statement(_WEIGHTS, _WEIGHT_COLUMNS, len(batch)),
+            _parameters(batch, _WEIGHT_COLUMNS),
+        )
     if updates:
         if conn.dialect.name in _WEIGHT_MERGE_DIALECTS:
             for start in range(0, len(updates), BATCH_SIZE):
                 batch = updates[start : start + BATCH_SIZE]
-                conn.execute(weight_merge_statement(len(batch)), _parameters(batch, _WEIGHT_COLUMNS))
+                conn.execute(
+                    weight_merge_statement(len(batch)), _parameters(batch, _WEIGHT_COLUMNS)
+                )
         else:
             conn.execute(_UPDATE_WEIGHT_SQL, updates)
     result = WeightWriteResult(len(inserts) - new_vintages, new_vintages, len(updates))
@@ -199,9 +228,13 @@ def upsert_original_weights(
     return result
 
 
-def upsert_hierarchy(conn: Connection, nodes: list[HierarchyNode], collected_at: datetime) -> tuple[int, int]:
+def upsert_hierarchy(
+    conn: Connection, nodes: list[HierarchyNode], collected_at: datetime
+) -> tuple[int, int]:
     """Insert new identities, correct changed ones, leave unchanged rows alone."""
-    existing = {str(r["series_id"]): dict(r) for r in conn.execute(_SELECT_HIERARCHY_SQL).mappings().all()}
+    existing = {
+        str(r["series_id"]): dict(r) for r in conn.execute(_SELECT_HIERARCHY_SQL).mappings().all()
+    }
     inserts: list[dict[str, Any]] = []
     updates: list[dict[str, Any]] = []
     for node in nodes:
@@ -221,13 +254,16 @@ def upsert_hierarchy(conn: Connection, nodes: list[HierarchyNode], collected_at:
     for start in range(0, len(inserts), BATCH_SIZE):
         batch = inserts[start : start + BATCH_SIZE]
         conn.execute(
-            _insert_statement(_HIERARCHY, _HIERARCHY_COLUMNS, len(batch)), _parameters(batch, _HIERARCHY_COLUMNS)
+            _insert_statement(_HIERARCHY, _HIERARCHY_COLUMNS, len(batch)),
+            _parameters(batch, _HIERARCHY_COLUMNS),
         )
     if updates:
         if conn.dialect.name in _HIERARCHY_MERGE_DIALECTS:
             for start in range(0, len(updates), BATCH_SIZE):
                 batch = updates[start : start + BATCH_SIZE]
-                conn.execute(hierarchy_merge_statement(len(batch)), _parameters(batch, _HIERARCHY_COLUMNS))
+                conn.execute(
+                    hierarchy_merge_statement(len(batch)), _parameters(batch, _HIERARCHY_COLUMNS)
+                )
         else:
             conn.execute(_UPDATE_HIERARCHY_SQL, updates)
     logger.info("Hierarchy upsert: inserted=%d updated=%d", len(inserts), len(updates))

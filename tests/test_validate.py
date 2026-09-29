@@ -26,8 +26,20 @@ SHARES = {G1: 60.0, G2: 40.0}
 
 
 def _catalog() -> dict[str, dict[str, str]]:
-    labels = {HEADLINE: "All Groups", G1: "Level 1 Groups", G2: "Level 1 Groups", C1: "Level 2 Subgroups", C11: "Level 3 Classes"}
-    return {sid: {"name": sid, "description": f"Stats NZ CPI CPI {label} for New Zealand; official code x"} for sid, label in labels.items()}
+    labels = {
+        HEADLINE: "All Groups",
+        G1: "Level 1 Groups",
+        G2: "Level 1 Groups",
+        C1: "Level 2 Subgroups",
+        C11: "Level 3 Classes",
+    }
+    return {
+        sid: {
+            "name": sid,
+            "description": f"Stats NZ CPI CPI {label} for New Zealand; official code x",
+        }
+        for sid, label in labels.items()
+    }
 
 
 def _weights() -> list[BaseWeight]:
@@ -59,9 +71,18 @@ def _observations(shift: float = 0.0) -> list[Observation]:
     out = []
     for i, q in enumerate(_quarters()):
         if i:
-            level = {G1: level[G1] * (1.01 + 0.002 * (i % 3)), G2: level[G2] * (1.004 - 0.001 * (i % 2))}
-            headline = base_headline * sum(SHARES[s] / 100 * level[s] / base_levels[s] for s in SHARES)
-        out += [Observation(G1, q, level[G1], "s"), Observation(G2, q, level[G2], "s"), Observation(HEADLINE, q, headline * (1 + shift if q == date(2021, 3, 31) else 1), "s")]
+            level = {
+                G1: level[G1] * (1.01 + 0.002 * (i % 3)),
+                G2: level[G2] * (1.004 - 0.001 * (i % 2)),
+            }
+            headline = base_headline * sum(
+                SHARES[s] / 100 * level[s] / base_levels[s] for s in SHARES
+            )
+        out += [
+            Observation(G1, q, level[G1], "s"),
+            Observation(G2, q, level[G2], "s"),
+            Observation(HEADLINE, q, headline * (1 + shift if q == date(2021, 3, 31) else 1), "s"),
+        ]
         if q in bases:
             base_levels, base_headline = dict(level), headline
     return out

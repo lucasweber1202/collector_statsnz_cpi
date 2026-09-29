@@ -1,4 +1,5 @@
 """Official Stats NZ base expenditure weights and native CPI hierarchy."""
+
 from __future__ import annotations
 
 import io
@@ -11,8 +12,7 @@ import openpyxl
 
 from scripts.extract import SourceLayoutError, build_series_id
 
-REGIMES = {2: date(2014, 6, 30), 4: date(2017, 9, 30),
-           6: date(2020, 6, 30), 8: date(2024, 12, 31)}
+REGIMES = {2: date(2014, 6, 30), 4: date(2017, 9, 30), 6: date(2020, 6, 30), 8: date(2024, 12, 31)}
 
 
 @dataclass(frozen=True)
@@ -63,7 +63,11 @@ def parse_base_weights(blob: bytes, catalog: dict[str, dict[str, Any]]) -> list[
     rows = list(workbook["8"].values)
     labels = {column: rows[6][column] for column in REGIMES}
     expected = {2: "June 2014", 4: "September 2017", 6: "June 2020", 8: "December 2024"}
-    if rows[5][1] != "Series ref: CPIQ" or rows[5][2] != "Base expenditure weight" or labels != expected:
+    if (
+        rows[5][1] != "Series ref: CPIQ"
+        or rows[5][2] != "Base expenditure weight"
+        or labels != expected
+    ):
         raise SourceLayoutError(f"Stats NZ weight table layout changed: {labels}")
     raw: dict[tuple[str, date], tuple[float, str]] = {}
     for row in rows[8:]:
@@ -79,7 +83,12 @@ def parse_base_weights(blob: bytes, catalog: dict[str, dict[str, Any]]) -> list[
             value = row[column]
             if value in (None, ".."):
                 continue
-            if not isinstance(value, int | float) or not math.isfinite(value) or value < 0 or value > 100:
+            if (
+                not isinstance(value, int | float)
+                or not math.isfinite(value)
+                or value < 0
+                or value > 100
+            ):
                 raise ValueError(f"Invalid base weight {sid}: {value}")
             key = sid, base
             if key in raw:
@@ -98,16 +107,31 @@ def parse_base_weights(blob: bytes, catalog: dict[str, dict[str, Any]]) -> list[
             if value == 0:
                 continue
             raise ValueError(f"Missing parent base weight: {sid} {base}")
-        result.append(BaseWeight(sid, parent, base, value / 100.0,
-                                 value / parent_value[0] if parent_value else None, label, value))
+        result.append(
+            BaseWeight(
+                sid,
+                parent,
+                base,
+                value / 100.0,
+                value / parent_value[0] if parent_value else None,
+                label,
+                value,
+            )
+        )
     for base in REGIMES.values():
-        top = [r.headline_share for r in result if r.base_period == base and r.parent_id == headline]
+        top = [
+            r.headline_share for r in result if r.base_period == base and r.parent_id == headline
+        ]
         if not 0.985 <= sum(top) <= 1.015:
-            raise SourceLayoutError(f"Headline expenditure weights fail roundoff tolerance: {base}, {sum(top)}")
+            raise SourceLayoutError(
+                f"Headline expenditure weights fail roundoff tolerance: {base}, {sum(top)}"
+            )
     return result
 
 
-def export_validation_workbook(path: str, weights: list[BaseWeight], catalog: dict[str, dict[str, Any]]) -> None:
+def export_validation_workbook(
+    path: str, weights: list[BaseWeight], catalog: dict[str, dict[str, Any]]
+) -> None:
     """Create a reproducible analyst review workbook; never modify official figures."""
     book = openpyxl.Workbook()
     index = book.active
@@ -117,8 +141,25 @@ def export_validation_workbook(path: str, weights: list[BaseWeight], catalog: di
     for sid, entry in sorted(catalog.items()):
         index.append([sid, entry["name"], entry["frequency"], entry["source_url"]])
     sheet = book.create_sheet("base_weights")
-    sheet.append(["series_id", "parent_id", "base_period", "headline_share", "parent_share", "official_label"])
+    sheet.append(
+        [
+            "series_id",
+            "parent_id",
+            "base_period",
+            "headline_share",
+            "parent_share",
+            "official_label",
+        ]
+    )
     for item in sorted(weights, key=lambda w: (w.base_period, w.series_id)):
-        sheet.append([item.series_id, item.parent_id, item.base_period.isoformat(),
-                      item.headline_share, item.parent_share, item.label])
+        sheet.append(
+            [
+                item.series_id,
+                item.parent_id,
+                item.base_period.isoformat(),
+                item.headline_share,
+                item.parent_share,
+                item.label,
+            ]
+        )
     book.save(path)

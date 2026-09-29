@@ -53,7 +53,9 @@ def _setup_logging(level: str) -> io.StringIO:
 
 
 def _parse_args(argv: list[str] | None) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Collect the official Stats NZ quarterly Consumers Price Index.")
+    parser = argparse.ArgumentParser(
+        description="Collect the official Stats NZ quarterly Consumers Price Index."
+    )
     parser.add_argument("--log-level", default=LOG_LEVEL)
     parser.add_argument("--start-date", type=date.fromisoformat, default=None)
     return parser.parse_args(argv)
@@ -84,7 +86,9 @@ def main(args: argparse.Namespace) -> int:
             data = collect()
             assert data.release is not None and data.source_catalog is not None
             assert data.source_observations is not None
-            full = SourceData(data.source_observations, data.source_catalog, data.release, data.workbook)
+            full = SourceData(
+                data.source_observations, data.source_catalog, data.release, data.workbook
+            )
             weights = parse_base_weights(data.workbook, data.source_catalog)
         except SourceLayoutError:
             logger.error("release_status=%s", LAYOUT_CHANGED)
@@ -101,16 +105,39 @@ def main(args: argparse.Namespace) -> int:
             result = upsert_time_series(conn, observations, collected_at)
             inserted, updated = upsert_metadata(conn, data.catalog, collected_at)
             weight_result = upsert_original_weights(conn, weights, collected_at)
-            hierarchy_inserted, hierarchy_updated = upsert_hierarchy(conn, build_hierarchy(data.source_catalog), collected_at)
+            hierarchy_inserted, hierarchy_updated = upsert_hierarchy(
+                conn, build_hierarchy(data.source_catalog), collected_at
+            )
             status = classify_release(
                 previous,
                 data.release.published,
                 max(item.reference_date for item in observations),
-                len(result.written_keys) + weight_result.new_weights + weight_result.new_vintages + weight_result.same_day_updates,
+                len(result.written_keys)
+                + weight_result.new_weights
+                + weight_result.new_vintages
+                + weight_result.same_day_updates,
             )
-        logger.info("release_status=%s published=%s page=%s", status, data.release.published, data.release.page_url)
-        logger.info("observations=%d new=%d revised=%d same_day=%d metadata_inserted=%d metadata_updated=%d", len(observations), result.new_observations, result.new_vintages, result.same_day_updates, inserted, updated)
-        logger.info("weights=%s hierarchy_inserted=%d hierarchy_updated=%d", weight_result, hierarchy_inserted, hierarchy_updated)
+        logger.info(
+            "release_status=%s published=%s page=%s",
+            status,
+            data.release.published,
+            data.release.page_url,
+        )
+        logger.info(
+            "observations=%d new=%d revised=%d same_day=%d metadata_inserted=%d metadata_updated=%d",
+            len(observations),
+            result.new_observations,
+            result.new_vintages,
+            result.same_day_updates,
+            inserted,
+            updated,
+        )
+        logger.info(
+            "weights=%s hierarchy_inserted=%d hierarchy_updated=%d",
+            weight_result,
+            hierarchy_inserted,
+            hierarchy_updated,
+        )
     finally:
         engine.dispose()
     return 0
@@ -135,7 +162,14 @@ if __name__ == "__main__":
         try:
             engine = build_engine()
             init_db(engine)
-            insert_run_log(engine, started_at=started_at, finished_at=finished_at, status=status, log_text=log_buffer.getvalue(), traceback_text=tb_text)
+            insert_run_log(
+                engine,
+                started_at=started_at,
+                finished_at=finished_at,
+                status=status,
+                log_text=log_buffer.getvalue(),
+                traceback_text=tb_text,
+            )
             engine.dispose()
         except Exception:
             logging.getLogger("main").exception("Could not persist run log")
