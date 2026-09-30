@@ -25,7 +25,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from datetime import date, datetime
+from datetime import UTC, date, datetime
 from typing import Any
 
 from sqlalchemy import TextClause, bindparam, text
@@ -115,7 +115,13 @@ def _source_column(column: str, index: int, casts: dict[str, str]) -> str:
 
 def _parameters(rows: list[dict[str, Any]], columns: tuple[str, ...]) -> dict[str, Any]:
     return {
-        f"{column}_{index}": row[column] for index, row in enumerate(rows) for column in columns
+        f"{column}_{index}": (
+            row[column].astimezone(UTC).replace(tzinfo=None)
+            if isinstance(row[column], datetime) and row[column].tzinfo
+            else row[column]
+        )
+        for index, row in enumerate(rows)
+        for column in columns
     }
 
 
@@ -171,6 +177,9 @@ def upsert_original_weights(
     conn: Connection, weights: list[BaseWeight], collected_at: datetime
 ) -> WeightWriteResult:
     """Apply the fleet vintage rules to the published Table 8 cells."""
+    collected_at = (
+        collected_at.astimezone(UTC).replace(tzinfo=None) if collected_at.tzinfo else collected_at
+    )
     today = collected_at.date()
     published = [w for w in weights if w.parent_id is not None]
     ids = sorted({w.series_id for w in published})
@@ -208,21 +217,28 @@ def upsert_original_weights(
         else:
             inserts.append(row)
             new_vintages += 1
+    if inserts:
+        logger.info("Inserting %d rows in %d batches of %d", len(inserts), (len(inserts) + BATCH_SIZE - 1) // BATCH_SIZE, BATCH_SIZE)
     for start in range(0, len(inserts), BATCH_SIZE):
         batch = inserts[start : start + BATCH_SIZE]
         conn.execute(
             _insert_statement(_WEIGHTS, _WEIGHT_COLUMNS, len(batch)),
             _parameters(batch, _WEIGHT_COLUMNS),
         )
+        logger.info("Inserted original-weight batch %d (%d/%d rows)", start // BATCH_SIZE + 1, min(start + BATCH_SIZE, len(inserts)), len(inserts))
     if updates:
+        logger.info("Updating %d rows in %d batches of %d", len(updates), (len(updates) + BATCH_SIZE - 1) // BATCH_SIZE, BATCH_SIZE)
         if conn.dialect.name in _WEIGHT_MERGE_DIALECTS:
             for start in range(0, len(updates), BATCH_SIZE):
                 batch = updates[start : start + BATCH_SIZE]
                 conn.execute(
                     weight_merge_statement(len(batch)), _parameters(batch, _WEIGHT_COLUMNS)
                 )
+                logger.info("Updated original-weight batch %d (%d/%d rows)", start // BATCH_SIZE + 1, min(start + BATCH_SIZE, len(updates)), len(updates))
         else:
-            conn.execute(_UPDATE_WEIGHT_SQL, updates)
+            for start in range(0, len(updates), BATCH_SIZE):
+                conn.execute(_UPDATE_WEIGHT_SQL, updates[start:start + BATCH_SIZE])
+                logger.info("Updated original-weight batch %d (%d/%d rows)", start // BATCH_SIZE + 1, min(start + BATCH_SIZE, len(updates)), len(updates))
     result = WeightWriteResult(len(inserts) - new_vintages, new_vintages, len(updates))
     logger.info("Original weights upsert: %s", result)
     return result
@@ -232,6 +248,9 @@ def upsert_hierarchy(
     conn: Connection, nodes: list[HierarchyNode], collected_at: datetime
 ) -> tuple[int, int]:
     """Insert new identities, correct changed ones, leave unchanged rows alone."""
+    collected_at = (
+        collected_at.astimezone(UTC).replace(tzinfo=None) if collected_at.tzinfo else collected_at
+    )
     existing = {
         str(r["series_id"]): dict(r) for r in conn.execute(_SELECT_HIERARCHY_SQL).mappings().all()
     }
@@ -251,20 +270,27 @@ def upsert_hierarchy(
             inserts.append(row)
         elif any(row[c] != current[c] for c in _HIERARCHY_COMPARABLE):
             updates.append(row)
+    if inserts:
+        logger.info("Inserting %d rows in %d batches of %d", len(inserts), (len(inserts) + BATCH_SIZE - 1) // BATCH_SIZE, BATCH_SIZE)
     for start in range(0, len(inserts), BATCH_SIZE):
         batch = inserts[start : start + BATCH_SIZE]
         conn.execute(
             _insert_statement(_HIERARCHY, _HIERARCHY_COLUMNS, len(batch)),
             _parameters(batch, _HIERARCHY_COLUMNS),
         )
+        logger.info("Inserted hierarchy batch %d (%d/%d rows)", start // BATCH_SIZE + 1, min(start + BATCH_SIZE, len(inserts)), len(inserts))
     if updates:
+        logger.info("Updating %d rows in %d batches of %d", len(updates), (len(updates) + BATCH_SIZE - 1) // BATCH_SIZE, BATCH_SIZE)
         if conn.dialect.name in _HIERARCHY_MERGE_DIALECTS:
             for start in range(0, len(updates), BATCH_SIZE):
                 batch = updates[start : start + BATCH_SIZE]
                 conn.execute(
                     hierarchy_merge_statement(len(batch)), _parameters(batch, _HIERARCHY_COLUMNS)
                 )
+                logger.info("Updated hierarchy batch %d (%d/%d rows)", start // BATCH_SIZE + 1, min(start + BATCH_SIZE, len(updates)), len(updates))
         else:
-            conn.execute(_UPDATE_HIERARCHY_SQL, updates)
+            for start in range(0, len(updates), BATCH_SIZE):
+                conn.execute(_UPDATE_HIERARCHY_SQL, updates[start:start + BATCH_SIZE])
+                logger.info("Updated hierarchy batch %d (%d/%d rows)", start // BATCH_SIZE + 1, min(start + BATCH_SIZE, len(updates)), len(updates))
     logger.info("Hierarchy upsert: inserted=%d updated=%d", len(inserts), len(updates))
     return len(inserts), len(updates)

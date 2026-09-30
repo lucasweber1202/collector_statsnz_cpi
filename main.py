@@ -24,11 +24,15 @@ from scripts.metadata import upsert_metadata
 from scripts.original_weights import build_hierarchy, upsert_hierarchy, upsert_original_weights
 from scripts.releases import LAYOUT_CHANGED, classify_release, stored_release
 from scripts.run_logs import insert_run_log
+from scripts.target_weights import derive_weights
 from scripts.time_series import get_last_observations, upsert_time_series
 from scripts.validate import validate_release
 from scripts.weight_sources import parse_base_weights
+from scripts.weights import upsert_weights
 
 logger = logging.getLogger("main")
+HEADLINE_SERIES = "STATSNZ_CPI_CPIQ_SE9A"
+TARGET_FREQUENCY = "quarterly"
 
 
 def _setup_logging(level: str) -> io.StringIO:
@@ -58,6 +62,7 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
     )
     parser.add_argument("--log-level", default=LOG_LEVEL)
     parser.add_argument("--start-date", type=date.fromisoformat, default=None)
+    parser.add_argument("--no-watch", action="store_true", help="Run once without waiting for a release.")
     return parser.parse_args(argv)
 
 
@@ -77,13 +82,17 @@ def main(args: argparse.Namespace) -> int:
     """Run source extraction and idempotent writes."""
     missing = missing_environment()
     if missing:
+        for problem in missing:
+            logger.error("Missing environment variable: %s", problem)
         raise RuntimeError(f"Missing environment variables: {', '.join(missing)}")
     engine = build_engine()
     try:
         init_db(engine)
         start = _start_date(engine, args.start_date)
         try:
-            data = collect()
+            data = _collect_for_release(engine, args)
+            if data is None:
+                return 0
             assert data.release is not None and data.source_catalog is not None
             assert data.source_observations is not None
             full = SourceData(
@@ -96,6 +105,7 @@ def main(args: argparse.Namespace) -> int:
         # Validation reads the complete release; the freshness filter only
         # decides which index series are written to time_series/metadata.
         validate_release(full, weights)
+        effective_weights = derive_weights(full, weights)
         observations = [item for item in data.observations if item.reference_date >= start]
         if not observations:
             raise ValueError(f"CPI source has no observations since {start}")
@@ -105,6 +115,7 @@ def main(args: argparse.Namespace) -> int:
             result = upsert_time_series(conn, observations, collected_at)
             inserted, updated = upsert_metadata(conn, data.catalog, collected_at)
             weight_result = upsert_original_weights(conn, weights, collected_at)
+            upsert_weights(conn, effective_weights, collected_at)
             hierarchy_inserted, hierarchy_updated = upsert_hierarchy(
                 conn, build_hierarchy(data.source_catalog), collected_at
             )
@@ -141,6 +152,35 @@ def main(args: argparse.Namespace) -> int:
     finally:
         engine.dispose()
     return 0
+
+
+def _collect_for_release(engine: Engine, args: argparse.Namespace) -> SourceData | None:
+    """Build history immediately; otherwise wait for the next target period."""
+    import calendar
+    import time
+
+    from scripts.config import MAX_WAIT, POLL_INTERVAL
+
+    last = get_last_observations(engine).get(HEADLINE_SERIES)
+    if last is None or args.start_date is not None or args.no_watch:
+        return collect()
+    step = 1 if TARGET_FREQUENCY == "monthly" else 3
+    month_index = last.year * 12 + last.month - 1 + step
+    year, zero_month = divmod(month_index, 12)
+    expected = date(year, zero_month + 1, calendar.monthrange(year, zero_month + 1)[1])
+    deadline = time.monotonic() + MAX_WAIT
+    logger.info("Monitoring target: stored=%s expected=%s", last, expected)
+    while True:
+        data = collect()
+        latest = max(o.reference_date for o in data.observations if o.series_id == HEADLINE_SERIES)
+        if latest >= expected:
+            logger.info("New target period detected: %s", latest)
+            return data
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            logger.info("Release monitoring timeout: no new target period")
+            return None
+        time.sleep(min(POLL_INTERVAL, remaining))
 
 
 if __name__ == "__main__":

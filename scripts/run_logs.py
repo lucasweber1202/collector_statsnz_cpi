@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from datetime import datetime
+from datetime import UTC, datetime
 
 from sqlalchemy import text
 from sqlalchemy.engine import Engine
@@ -43,8 +43,8 @@ def insert_run_log(
             conn.execute(
                 _INSERT_SQL,
                 {
-                    "started_at": started_at,
-                    "finished_at": finished_at,
+                    "started_at": started_at.astimezone(UTC).replace(tzinfo=None) if started_at.tzinfo else started_at,
+                    "finished_at": finished_at.astimezone(UTC).replace(tzinfo=None) if finished_at.tzinfo else finished_at,
                     "status": status,
                     "log_text": _truncate(log_text) or "",
                     "traceback": _truncate(traceback_text),
