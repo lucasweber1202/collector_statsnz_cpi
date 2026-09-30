@@ -148,3 +148,26 @@ that goes backwards fails the run. The status is written to the run log.
 ## Masuko authority verification
 
 Pinned authority: `guimasuko/collector_template@4bc65765cedd9c14aec196cff382df6dfb318c77`. Physical `.github/` and `.vscode/` paths are checked against Git blobs. `.gitignore` and `scripts/databricks_engine.py` have no physical path in the template tree; they are canonical fenced blocks in `GUIDELINES.md` sections 8.1 and 8.9. The guideline Git blob is `089fbbca6a2241d3f02777b82631fbf81d49f6e0`; the two derived file blobs are `f0d1368264d24d7959d3137d618930a06f33795e` and `73821f7a530ab5cca2f5313180d71c17173e6e59`. `tests/test_architecture.py` checks all local blobs on every run. For independent source derivation, check out the exact authority commit and run `MASUKO_TEMPLATE_DIR=/path/to/collector_template python -m pytest -q tests/test_architecture.py`. This checks the guideline blob, extracts both fenced blocks and checks their hashes.
+
+## Stored-output reconciliation gate (2026-09-30) — NOT READY
+
+A separate audit read only the four database-exported sheets and reconstructed
+parent quarterly relatives with closing shares. 2,664 parent/quarter pairs
+were checked. Sibling sums differ from 1 by at most 3.33e-16, but that alone
+does not prove aggregation. The largest residual was accommodation services
+(SE9096), June 2024: predicted relative 0.8970983745 versus published
+0.9551136364, a 0.0580152619 difference. At the latest quarter (June 2026),
+55 parent checks had maximum relative difference 0.0025219387.
+
+These discrepancies are not hidden by widening a tolerance or forcing weights
+to fit the published parent. The Table 8-derived shares are an auditable
+candidate system, not a proven reconstruction of every official aggregate.
+This forecast target remains NOT READY for complete aggregation sign-off,
+even though PG, live ingestion, PIT, idempotency and export gates pass.
+
+[Stats NZ CPI methodology](https://datainfoplus.stats.govt.nz/item/nz.govt.stats/8b0860b8-cf63-4f12-a578-8eed8ba69ac3)
+explains annual adjustments to airfares and overseas accommodation after the
+2020 review, with related rescaling of other basket shares. The four fixed
+Table 8 baskets alone do not encode all such intervening changes. Integrating
+those published reweight regimes and revalidating every hierarchy level remains
+implementation work; it does not require a corporate Databricks credential.
