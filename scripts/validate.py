@@ -4,18 +4,13 @@ Every check here reads only published Stats NZ figures. A failure is a
 ``TargetValidationError`` and the run stops before the write transaction, so a
 release that no longer satisfies the audited contract never reaches the tables.
 
-The aggregation check is the strongest one. Stats NZ publishes Table 8 base
-expenditure weights (percent of all-groups expenditure) at four price-reference
-quarters. Used as Lowe shares on the group index relatives to that quarter,
+The aggregation check links group index relatives at each published basket base,
+including the interim June 2021, June 2022 and June 2023 regimes. It tests the
+same 0.1% bound used before this correction. The September 2024 pinned exception
+is no longer necessary once the official interim regimes are represented.
+Exact recovery of unpublished unrounded inputs is not claimed; the separate
+stored-output reconciliation exposes every available parent and its precision.
 
-    I_all(t) = I_all(b) * sum_g w_g(b) * I_g(t) / I_g(b)      for b < t <= next b
-
-they reproduce the published all-groups index. The residual comes from the
-published rounding (index levels to whole points, weights to two decimals). On
-the June 2026 release it stayed within +/-0.063% in 47 of the 48 checked
-quarters from September 2014 to June 2026; the one exception is pinned below.
-This validates the published weights and hierarchy against the published index. It is not a claim that the chained CPI can be rebuilt exactly:
-Stats NZ aggregates unrounded elementary indices, which are not published.
 """
 
 from __future__ import annotations
@@ -33,18 +28,16 @@ import openpyxl
 
 from scripts.extract import SourceData, SourceLayoutError
 from scripts.time_series import Observation
-from scripts.weight_sources import REGIMES, BaseWeight, hierarchy_level, parent_id
+from scripts.weight_sources import INTERIM_BASES, REGIMES, BaseWeight, hierarchy_level, parent_id
 
 logger = logging.getLogger(__name__)
 HEADLINE = "STATSNZ_CPI_CPIQ_SE9A"
 PREFIX = "STATSNZ_CPI_CPIQ_"
 # Maximum |reconstructed / published - 1| for the group-level aggregation.
 AGGREGATION_TOLERANCE = 0.001
-# Quarters where the published material does not explain the gap, pinned to the
-# measured error so that a change in either direction still fails. September
-# 2024 sits in the June 2020 basket (the December 2024 weights apply from March
-# 2025, Stats NZ "Consumers price index review: 2024") and rebuilds 0.134% high.
-KNOWN_AGGREGATION_EXCEPTIONS = {date(2024, 9, 30): 0.001339}
+# Explicit exceptional comparisons remain supported for source investigations;
+# none is necessary with the complete public 2014--2024 regime set.
+KNOWN_AGGREGATION_EXCEPTIONS: dict[date, float] = {}
 # Published top-level weights sum to 100 within rounding (99.99..100.01).
 TOP_LEVEL_TOLERANCE = 0.05
 # Children published below their parent by more than rounding. Each entry is a
@@ -117,7 +110,10 @@ def validate_weights(weights: list[BaseWeight], catalog: dict[str, dict[str, Any
     keys = [(w.series_id, w.base_period) for w in weights]
     if len(keys) != len(set(keys)):
         raise TargetValidationError("Duplicate (series_id, base_period) weight")
-    if {w.base_period for w in weights} != set(REGIMES.values()):
+    bases = {w.base_period for w in weights}
+    if not bases.issubset(set(REGIMES.values()) | set(INTERIM_BASES)) or not set(
+        REGIMES.values()
+    ).issubset(bases):
         raise TargetValidationError("Unexpected Table 8 base periods")
     orphans = sorted({w.series_id for w in weights} - set(catalog))
     if orphans:
@@ -127,7 +123,7 @@ def validate_weights(weights: list[BaseWeight], catalog: dict[str, dict[str, Any
     for w in weights:
         if w.parent_id is not None:
             children[(w.parent_id, w.base_period)].append(w)
-    for base in REGIMES.values():
+    for base in bases:
         top = sum(w.percent for w in children[(HEADLINE, base)])
         if abs(top - 100.0) > TOP_LEVEL_TOLERANCE:
             raise TargetValidationError(f"Top-level weights sum to {top:.2f} at {base}")
@@ -172,7 +168,7 @@ def validate_aggregation(
 ) -> tuple[int, float]:
     """Rebuild all-groups from group indices and published weights, per regime."""
     index = {(o.series_id, o.reference_date): o.value for o in observations}
-    bases = sorted(REGIMES.values())
+    bases = sorted({w.base_period for w in weights})
     last = max(o.reference_date for o in observations if o.series_id == HEADLINE)
     checked = 0
     worst = 0.0
@@ -270,7 +266,7 @@ def validate_release(full: SourceData, weights: list[BaseWeight]) -> ValidationR
         weight_records=sum(w.parent_id is not None for w in weights),
         weight_series=len({w.series_id for w in weights if w.parent_id is not None}),
         inherited_weight_series=inherited,
-        regimes=len(REGIMES),
+        regimes=len({w.base_period for w in weights}),
         quarters_checked=checked,
         max_aggregation_error=worst,
         cross_file_points=cross_checked,

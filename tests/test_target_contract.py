@@ -30,6 +30,7 @@ def test_monitoring_timeout_and_new_period(monkeypatch: pytest.MonkeyPatch) -> N
     from scripts import config
     monkeypatch.setattr(config,'MAX_WAIT',0)
     monkeypatch.setattr(main,'get_last_observations',lambda engine:{main.HEADLINE_SERIES:date(2026,6,30)})
+    monkeypatch.setattr(main, "has_source_revisions", lambda *args: False)
     old=SimpleNamespace(observations=[SimpleNamespace(series_id=main.HEADLINE_SERIES,reference_date=date(2026,6,30))])
     monkeypatch.setattr(main,'collect',lambda:old)
     args=Namespace(start_date=None,no_watch=False)
@@ -61,3 +62,52 @@ def test_weight_idempotency_revision_and_asof() -> None:
         assert conn.execute(text(f'SELECT weight FROM {SCHEMA_NAME}.weights WHERE series_id=:s AND vintage_date<=:d ORDER BY vintage_date DESC,collected_at DESC LIMIT 1'),{'s':sid,'d':t.date()}).scalar()==0.25
         conn.execute(text(f'DELETE FROM {SCHEMA_NAME}.weights WHERE series_id=:s'),{'s':sid})
     engine.dispose()
+
+
+def test_monitoring_ingests_revision_without_new_period(monkeypatch: pytest.MonkeyPatch) -> None:
+    from scripts import config
+
+    monkeypatch.setattr(config, "MAX_WAIT", 900)
+    monkeypatch.setattr(
+        main, "get_last_observations", lambda engine: {main.HEADLINE_SERIES: date(2026, 6, 30)}
+    )
+    revised = SimpleNamespace(
+        observations=[
+            SimpleNamespace(series_id=main.HEADLINE_SERIES, reference_date=date(2026, 6, 30))
+        ]
+    )
+    monkeypatch.setattr(main, "collect", lambda: revised)
+    monkeypatch.setattr(main, "has_source_revisions", lambda *args: True)
+    assert (
+        main._collect_for_release(Mock(spec=Engine), Namespace(start_date=None, no_watch=False))
+        is revised
+    )
+
+
+def test_revision_detection_against_stored_vintage() -> None:
+    import os
+
+    from scripts import time_series
+
+    url = os.getenv("COLLECTOR_TEST_PG_URL")
+    if not url:
+        pytest.skip("requires disposable PostgreSQL")
+    engine = create_engine(url)
+    init_db.init_db(engine)
+    sid = "TEST_MONITOR_REVISION"
+    ref = date(2026, 6, 30)
+    first = [time_series.Observation(sid, ref, 100.0, "a")]
+    with engine.begin() as conn:
+        conn.execute(text(f"DELETE FROM {SCHEMA_NAME}.time_series WHERE series_id=:s"), {"s": sid})
+        time_series.upsert_time_series(conn, first, datetime(2026, 9, 20, tzinfo=UTC))
+    try:
+        assert not time_series.has_source_revisions(engine, first, date(2026, 1, 1))
+        changed = [time_series.Observation(sid, ref, 101.0, "b")]
+        assert time_series.has_source_revisions(engine, changed, date(2026, 1, 1))
+        assert not time_series.has_source_revisions(engine, changed, date(2026, 7, 1))
+    finally:
+        with engine.begin() as conn:
+            conn.execute(
+                text(f"DELETE FROM {SCHEMA_NAME}.time_series WHERE series_id=:s"), {"s": sid}
+            )
+        engine.dispose()

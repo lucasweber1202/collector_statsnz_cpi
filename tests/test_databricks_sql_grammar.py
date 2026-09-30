@@ -16,7 +16,16 @@ import shutil
 import pytest
 from sqlalchemy.sql.elements import TextClause
 
-from scripts import init_db, metadata, original_weights, releases, run_logs, time_series, weights
+from scripts import (
+    init_db,
+    metadata,
+    original_weights,
+    reconcile,
+    releases,
+    run_logs,
+    time_series,
+    weights,
+)
 
 
 def statements() -> list[str]:
@@ -42,6 +51,17 @@ def statements() -> list[str]:
         original_weights._SELECT_HIERARCHY_SQL,
         original_weights._UPDATE_HIERARCHY_SQL,
     ]
+    emitted += [reconcile.HIERARCHY_SQL.format(schema="collector_statsnz_cpi")]
+    for table, measure in (
+        ("time_series", "value"),
+        ("weights", "weight"),
+        ("original_weights", "weight"),
+    ):
+        emitted.append(
+            reconcile.LATEST_SQL.format(
+                schema="collector_statsnz_cpi", table=table, measure=measure
+            )
+        )
     for count in (1, 3):
         emitted += [
             metadata._insert_statement(count),
