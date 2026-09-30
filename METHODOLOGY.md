@@ -78,9 +78,37 @@ reproduce the CPI exactly: Stats NZ aggregates unrounded elementary indices that
 are not published, and published levels are rounded to whole points.
 
 `python -m scripts.export_validation_xlsx --output validation.xlsx` writes an
-analyst workbook (`index_catalog`, `base_weights`) from the live files.
+workbook from the stored latest vintages, with one sheet each for `time_series`,
+`weights`, `original_weights` and `cpi_hierarchy`; no source is re-downloaded.
+
+## Effective parent shares and coverage
+
+`weights` stores closing-quarter shares, separately from untouched Table 8
+percentages in `original_weights`. For basket b and child i, the contribution
+is `percent_i(b) * index_i(t) / index_i(b)`; normalize among a parent's
+published children to sum to 1. A sole child inherits share 1. Headline has
+share 1 at every period. These are contribution shares, not coefficients for
+SUMPRODUCT of levels. Within a stable basket, shares at t weight component
+relatives from t to t+1; equivalently, closing shares give the inverse-weighted
+relative `1 / SUM(weight(t) / (index(t)/index(t-1)))`. Basket-boundary quarters
+require the original basket and chain linking described above.
+
+Derived coverage begins June 2014. Pre-2014 baskets are absent from the latest
+Table 8 and are not invented. For subgroups SE9073 and SE9096, the source supplies positive
+historical basket percentages but missing base indices for classes SE907302,
+SE907303 and SE909601. Those parent/quarter shares are omitted and explicitly logged;
+the entire parent is skipped so remaining siblings are not silently
+renormalized. Original percentages and observed levels remain recoverable.
+The known 2014 unpublished component and September 2024 headline residual
+remain the explicit exceptions in `validate.py`.
 
 ## Release monitoring
+
+An empty headline database collects history immediately. A populated database
+waits for the next calendar quarter, polling every 30 seconds for up to 900
+seconds (`COLLECTOR_POLL_INTERVAL`, `COLLECTOR_MAX_WAIT`). Timeout is normal and
+persists a success log. `--no-watch` or explicit `--start-date` forces one pass.
+
 
 `scripts/releases.py` classifies each run from source evidence (the release
 page's publication date and the latest covered quarter) against what the

@@ -81,3 +81,12 @@ def missing_environment(prod: bool = PROD) -> list[str]:
         return [] if DATABASE_URL else ["COLLECTOR_DB_URL"]
     required = {"DBX_SERVER_HOSTNAME": DBX_SERVER_HOSTNAME, "DBX_HTTP_PATH": DBX_HTTP_PATH}
     return sorted(name for name, value in required.items() if not value)
+
+# Forecast-target release monitoring: a normal timeout still writes a success log.
+POLL_INTERVAL = float(os.getenv("COLLECTOR_POLL_INTERVAL", "30"))
+MAX_WAIT = float(os.getenv("COLLECTOR_MAX_WAIT", "900"))
+if POLL_INTERVAL <= 0 or MAX_WAIT < 0:
+    raise ValueError("Polling interval must be positive and maximum wait non-negative")
+
+if MAX_RETRIES < 1 or BACKOFF_FACTOR < 0 or DOWNLOAD_DELAY < 0:
+    raise ValueError("HTTP retry count must be positive and delays non-negative")

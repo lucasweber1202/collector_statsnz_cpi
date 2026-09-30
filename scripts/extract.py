@@ -10,6 +10,7 @@ import io
 import logging
 import math
 import re
+import time
 from dataclasses import dataclass
 from datetime import UTC, date, datetime
 from typing import Any
@@ -17,7 +18,7 @@ from urllib.parse import urljoin
 
 import httpx
 
-from scripts.config import REQUEST_TIMEOUT, USER_AGENT
+from scripts.config import BACKOFF_FACTOR, DOWNLOAD_DELAY, MAX_RETRIES, REQUEST_TIMEOUT, USER_AGENT
 from scripts.time_series import Observation
 
 # Canonical metadata vocabulary produced by this source.
@@ -98,7 +99,7 @@ def discover_release(client: httpx.Client, today: date) -> Release:
         year, month0 = divmod(index, 12)
         quarter_month = (month0 // 3 + 1) * 3
         page = f"{SOURCE_ROOT}/information-releases/consumers-price-index-{calendar.month_name[quarter_month].lower()}-{year}-quarter/"
-        response = client.get(page)
+        response = _http_get(client, page)
         if response.status_code == 404:
             continue
         response.raise_for_status()
@@ -248,9 +249,11 @@ def collect() -> SourceData:
     """
     with httpx.Client(timeout=REQUEST_TIMEOUT, headers={"User-Agent": USER_AGENT}) as client:
         release = discover_release(client, datetime.now(UTC).date())
-        blob = check_payload(client.get(release.csv_url), "csv")
-        workbook = check_payload(client.get(release.workbook_url), "xlsx")
+        blob = check_payload(_http_get(client, release.csv_url), "csv")
+        workbook = check_payload(_http_get(client, release.workbook_url), "xlsx")
     parsed = parse_csv(blob, release.csv_url, release.published)
+    for fields in parsed.catalog.values():
+        fields["source_url"] = release.page_url
     usable = filter_usable_series(parsed, datetime.now(UTC).date())
     logger.info(
         "%s: %d source series, %d usable, %d observations",
@@ -262,3 +265,39 @@ def collect() -> SourceData:
     return SourceData(
         usable.observations, usable.catalog, release, workbook, parsed.catalog, parsed.observations
     )
+
+
+def _http_get(client: httpx.Client, url: str) -> httpx.Response:
+    """Retry transport failures, HTTP 429 and 5xx; preserve source-specific checks."""
+    for attempt in range(1, MAX_RETRIES + 1):
+        try:
+            time.sleep(DOWNLOAD_DELAY)
+            response = client.get(url)
+            if response.status_code == 429 or response.status_code >= 500:
+                response.raise_for_status()
+            return response
+        except (httpx.TransportError, httpx.HTTPStatusError):
+            if attempt == MAX_RETRIES:
+                raise
+            wait = BACKOFF_FACTOR ** attempt
+            logging.getLogger(__name__).warning(
+                "GET failed, retry %d/%d in %.1fs", attempt, MAX_RETRIES, wait
+            )
+            time.sleep(wait)
+    raise RuntimeError("COLLECTOR_MAX_RETRIES must be positive")
+
+
+UPSTREAM_METADATA: dict[str, dict[str, Any]] = {}
+
+
+def collect_raw_data(start_date: date | None = None) -> dict[date, dict[str, float | None]]:
+    """Expose the canonical mapping and refresh upstream descriptors on every call."""
+    UPSTREAM_METADATA.clear()
+    data = collect()
+    UPSTREAM_METADATA.update(data.catalog)
+    parsed: dict[date, dict[str, float | None]] = {}
+    for item in data.observations:
+        if start_date is None or item.reference_date >= start_date:
+            parsed.setdefault(item.reference_date, {})[item.series_id] = item.value
+    logging.getLogger(__name__).info("Parsed %d dates", len(parsed))
+    return parsed

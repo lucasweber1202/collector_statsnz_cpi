@@ -16,7 +16,7 @@ import shutil
 import pytest
 from sqlalchemy.sql.elements import TextClause
 
-from scripts import init_db, metadata, original_weights, releases, run_logs, time_series
+from scripts import init_db, metadata, original_weights, releases, run_logs, time_series, weights
 
 
 def statements() -> list[str]:
@@ -26,6 +26,7 @@ def statements() -> list[str]:
         init_db.CREATE_METADATA_TABLE,
         init_db.CREATE_TIME_SERIES_TABLE.format(double_type="DOUBLE"),
         init_db.CREATE_LOGS_TABLE,
+        init_db.CREATE_WEIGHTS_TABLE.format(double_type="DOUBLE"),
         init_db.CREATE_ORIGINAL_WEIGHTS_TABLE.format(double_type="DOUBLE"),
         init_db.CREATE_HIERARCHY_TABLE,
         metadata._SELECT_SQL,
@@ -47,6 +48,8 @@ def statements() -> list[str]:
             metadata._merge_statement(count),
             time_series._insert_statement(count),
             time_series._merge_statement(count),
+            weights._insert_statement(count),
+            weights._merge_statement(count),
             original_weights._insert_statement(
                 original_weights._WEIGHTS, original_weights._WEIGHT_COLUMNS, count
             ),

@@ -94,7 +94,7 @@ def test_init_db_creates_every_table_idempotently(engine: Engine) -> None:
                 {"s": SCHEMA_NAME},
             ).scalars()
         )
-    assert tables == {"metadata", "time_series", "logs", "original_weights", "cpi_hierarchy"}
+    assert tables == {"metadata", "time_series", "logs", "weights", "original_weights", "cpi_hierarchy"}
 
 
 def test_first_run_then_unchanged_rerun_is_a_no_op(engine: Engine) -> None:

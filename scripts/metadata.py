@@ -7,7 +7,7 @@ they describe the full stored history rather than the current extraction window.
 from __future__ import annotations
 
 import logging
-from datetime import date, datetime
+from datetime import UTC, date, datetime
 from typing import Any
 
 from sqlalchemy import TextClause, text
@@ -35,7 +35,8 @@ _COMPARABLE_COLUMNS = (
     "source_url",
     "last_publish_date",
 )
-_COLUMNS = ("series_id", *_COMPARABLE_COLUMNS, "collected_at")
+_INSERT_COLUMNS = ("series_id", *_COMPARABLE_COLUMNS, "collected_at")
+_COLUMNS = _INSERT_COLUMNS
 _UPDATE_COLUMNS = tuple(column for column in _COLUMNS if column != "series_id")
 _MERGE_DIALECTS = frozenset({"databricks", "postgresql"})
 
@@ -45,7 +46,7 @@ _SELECT_SQL = text(f"SELECT {', '.join(_COLUMNS)} FROM {_TABLE}")
 def _batch_parameters(rows: list[dict[str, Any]]) -> dict[str, Any]:
     """Flatten a batch into named parameters suffixed by row position."""
     return {
-        f"{column}_{index}": row[column] for index, row in enumerate(rows) for column in _COLUMNS
+        f"{column}_{index}": (row[column].astimezone(UTC).replace(tzinfo=None) if isinstance(row[column], datetime) and row[column].tzinfo else row[column]) for index, row in enumerate(rows) for column in _COLUMNS
     }
 
 
@@ -152,6 +153,7 @@ def upsert_metadata(
     Returns ``(inserted, updated)``. An unchanged row is neither, so a rerun
     against an unchanged source writes nothing here, including `collected_at`.
     """
+    collected_at = collected_at.astimezone(UTC).replace(tzinfo=None) if collected_at.tzinfo else collected_at
     validate_catalog(catalog)
     aggregates = get_series_aggregates(conn)
     existing = {
