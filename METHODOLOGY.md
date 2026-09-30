@@ -1,173 +1,82 @@
 # Stats NZ CPI target collector — methodology
 
-Authority: `guimasuko/collector_template` main `4bc65765cedd9c14aec196cff382df6dfb318c77`
-(AUD/NZD are part of its `metadata.country` vocabulary). This repository emits
-`country = NZD`.
+Authority: `guimasuko/collector_template@4bc65765cedd9c14aec196cff382df6dfb318c77`, including `FORECAST_TARGET_GUIDELINES.md`. Country is `NZD`. Section 4 requires preserving official weights and documenting differences; sections 5 and 8 require reproducible derived measures and independent validation from stored outputs. They do not require exact recovery of unpublished elementary indices or a zero residual from rounded public indices.
 
-## Source
+## Sources and identities
 
-- [Stats NZ quarterly CPI release](https://www.stats.govt.nz/information-releases/consumers-price-index-june-2026-quarter/).
-  `discover_release` probes the five most recent quarterly release pages and
-  reads, from the page itself, the `PublicationDate`, the `*-index-numbers.csv`
-  link and the release workbook `*-quarter.xlsx` link. No URL is hardcoded.
-- Payload checks before parsing (`check_payload`): HTML/challenge pages are
-  refused whatever their `Content-Type`; the workbook must start with the XLSX
-  (`PK\x03\x04`) magic; the CSV must start with the audited `Series_reference`
-  header; both must exceed a minimum size; the CSV must carry at least 20,000
-  rows and every required column. A failure raises `SourceAccessError` or
-  `SourceLayoutError` and nothing is written.
+The collector discovers the current quarterly release page and its publication date, index CSV and release XLSX. Payload signatures and required columns reject HTML challenges and changed layouts before writing. Native IDs are reversible (`CPIQ.SE9A` → `STATSNZ_CPI_CPIQ_SE9A`). Levels are quarterly CPI indices, June 2017 = 1000; early zero placeholders are missing values. The release has 164 identities: headline, 11 groups, 44 subgroups and 108 classes. The freshness filter retains 163 series; retired `SE904404` remains in the original hierarchy and weight history.
 
-## Target and series
+The June 2026 release, published 21 July 2026, contains 22,590 retained observations (June 1914–June 2026). The publication date is source evidence, not collection time.
 
-- 164 native IDs: all groups (`CPIQ.SE9A`), 11 groups, 44 subgroups, 108
-  classes. `series_id = STATSNZ_CPI_<native with . → _>`, reversible by
-  `parse_series_id`. Values are quarterly **index levels** (base June 2017
-  quarter = 1000), not growth rates. Stats NZ's early zero placeholders are
-  treated as missing.
-- The freshness filter (≥3 years of history, last point ≤6 months old) drops
-  one class, `CPIQ.SE904404` (removed in the 2024 basket review), from
-  `time_series`/`metadata`. It stays in `cpi_hierarchy` and in validation.
-- Default start date is 1914-01-01 so the full published history is stored.
-- June 2026 release (published 2026-07-21): 163 stored series, 22,590
-  observations, June 1914 – June 2026. All groups: 1327 (Dec 2025), 1339
-  (Mar 2026), 1359 (Jun 2026).
+## Official regimes and provenance
 
-## Official weights and hierarchy (persisted)
+| Price reference quarter | Source | First movement using basket |
+| --- | --- | --- |
+| June 2014 | current release Table 8 | September 2014 |
+| September 2017 | current Table 8, revised 2017 review | December 2017 |
+| June 2020 | current Table 8 | September 2020 |
+| June 2021 | corrected 2023 review workbook Table 1 | September 2021 |
+| June 2022 | corrected 2023 review workbook Table 1 | September 2022 |
+| June 2023 | corrected 2023 review workbook Table 1 | September 2023 |
+| December 2024 | current Table 8 / 2024 review | March 2025 |
 
-Release workbook Table 8 publishes base expenditure weights (percent of
-all-groups expenditure) for four baskets, expressed in the prices of the June
-2014, September 2017, June 2020 and December 2024 quarters. The December 2024
-weights apply from the March 2025 quarter
-([CPI review 2024](https://www.stats.govt.nz/methods/consumers-price-index-review-2024/)).
+The pandemic adjustments changed international airfares and prepaid overseas accommodation, with rescaling of the remaining basket. Therefore the full interim table is retained, rather than changing only travel children. The 2024 review explicitly says the final annual adjustment was June 2023. No June 2024 interim basket is invented.
 
-- `original_weights` — every published Table 8 cell, unmodified, in percent:
-  `(series_id, reference_date = base quarter end, vintage_date)`, plus
-  `weight_base_year`. 595 cells on the June 2026 release. The all-groups 100 is
-  definitional, not published, and not stored. Vintage rules are the
-  time-series rules (new vintage on a later-day change, same-day overwrite,
-  no-op when unchanged).
-- `cpi_hierarchy` — one row per published identity (164): native code, level
-  (0–3), parent, source name. Parent comes from the native code; the level is
-  cross-checked against the published group label.
-- **Base weights are not effective quarterly aggregation weights.** In a
-  quarter `t` after base `b`, a component's effective share is its base share
-  price-updated by its own relative, `w_i(b)·I_i(t)/I_i(b)` renormalised. That
-  is a derived quantity and is not stored.
+Official references:
 
-## Validation (runs before any write; failure stops the run)
+- [2021 adjustment](https://www.stats.govt.nz/methods/impacts-of-covid-19-on-methodology-for-the-september-2021-quarter-cpi/)
+- [2022 adjustment](https://www.stats.govt.nz/methods/price-index-methods-updates-for-the-september-2022-quarter/)
+- [2023 methodology and corrected workbook](https://www.stats.govt.nz/methods/price-index-methods-updates-for-the-september-2023-quarter/)
+- [Corrected workbook](https://www.stats.govt.nz/assets/Methods/Price-index-methods-updates-for-the-September-2023-quarter/consumers-price-index-reweight-2023-corrected.xlsx)
+- [2017 revised review](https://www.stats.govt.nz/methods/consumers-price-index-review-2017-revised/)
+- [2024 review](https://www.stats.govt.nz/methods/consumers-price-index-review-2024/)
+- [CPI methodology / publication precision](https://datainfoplus.stats.govt.nz/item/nz.govt.stats/8b0860b8-cf63-4f12-a578-8eed8ba69ac3)
 
-`scripts/validate.py`, on the complete parsed release:
+The interim parser validates the three dated headers, all 11 groups, hierarchy context, finite percentages and identities. Explicit name aliases bridge official label changes; an unknown identity fails. The retired package-holidays row has zero in all interim baskets and is omitted without inventing a native code. Download URL, table, periods and payload SHA-256 are written to run logs.
 
-| Check | Rule |
-| --- | --- |
-| Hierarchy | exactly one root (`SE9A`); each code's level agrees with its published group label; every parent is published |
-| Duplicates / orphans | no duplicate `(series_id, base)`; no Table 8 code without an index series |
-| Base periods | exactly the four published bases |
-| Top-level sums | 11 groups sum to 100 ± 0.05 for every base (published 100.00/99.99/100.00/100.01) |
-| Child sums | children never exceed their parent beyond rounding; a shortfall beyond rounding fails unless pinned (one: Recreation and culture, June 2014 basket, 1.13 pp for a component discontinued before the current release) |
-| Weightless series | the 14 index series without a Table 8 row must each be their parent's only child (they inherit its weight) |
-| Cross-file | 280 index levels in workbook Table 2.01 (groups, subgroups, all groups, five quarters) equal the CSV exactly |
-| Aggregation | all groups rebuilt from the 11 group indices with the Table 8 weights (Lowe formula, linked at each base quarter) matches the published index within 0.1% |
+`original_weights` preserves 595 Table 8 cells plus 447 interim cells, in percentage points, with original price reference dates. Definitional all-groups 100 is not stored as a published cell. `cpi_hierarchy` preserves 164 native identities, levels, parents and names. Their persistence follows the same UTC collection-vintage rules as observations.
 
-Aggregation result on the June 2026 release: 48 quarters checked (Sep 2014 –
-Jun 2026); maximum |error| 0.063% in 47 of them. September 2024 (still in the
-June 2020 basket) rebuilds 0.134% high; the published material does not explain
-it, so it is pinned to its measured value and any drift fails. This validates
-the weights and hierarchy against the published index. It does **not**
-reproduce the CPI exactly: Stats NZ aggregates unrounded elementary indices that
-are not published, and published levels are rounded to whole points.
+## Derived weights and boundaries
 
-`python -m scripts.export_validation_xlsx --output validation.xlsx` writes an
-workbook from the stored latest vintages, with one sheet each for `time_series`,
-`weights`, `original_weights` and `cpi_hierarchy`; no source is re-downloaded.
+For the movement from quarter t−1 to t, choose the most recent basket b strictly before t. The opening share is:
 
-## Effective parent shares and coverage
+`share_i(t) = [w_i(b) * I_i(t-1) / I_i(b)] / SUM_j[w_j(b) * I_j(t-1) / I_j(b)]`.
 
-`weights` stores closing-quarter shares, separately from untouched Table 8
-percentages in `original_weights`. For basket b and child i, the contribution
-is `percent_i(b) * index_i(t) / index_i(b)`; normalize among a parent's
-published children to sum to 1. A sole child inherits share 1. Headline has
-share 1 at every period. These are contribution shares, not coefficients for
-SUMPRODUCT of levels. Within a stable basket, shares at t weight component
-relatives from t to t+1; equivalently, closing shares give the inverse-weighted
-relative `1 / SUM(weight(t) / (index(t)/index(t-1)))`. Basket-boundary quarters
-require the original basket and chain linking described above.
+It weights the component relative `I_i(t)/I_i(t-1)`. These normalized shares are persisted separately in `weights`; originals are never overwritten or fitted to parents. A sole child inherits 1, and the headline has 1. At the basket's price reference quarter the previous basket still applies; the replacement starts the following quarter.
 
-Derived coverage begins June 2014. Pre-2014 baskets are absent from the latest
-Table 8 and are not invented. For subgroups SE9073 and SE9096, the source supplies positive
-historical basket percentages but missing base indices for classes SE907302,
-SE907303 and SE909601. Those parent/quarter shares are omitted and explicitly logged;
-the entire parent is skipped so remaining siblings are not silently
-renormalized. Original percentages and observed levels remain recoverable.
-The known 2014 unpublished component and September 2024 headline residual
-remain the explicit exceptions in `validate.py`.
+A parent is omitted if a positive-weight component lacks current/previous/base indices, or if the public children fail to account for the stated parent beyond source rounding. Remaining siblings are never silently normalized. Examples are the retired package-holidays component in the 2014 recreation basket and missing historic class base indices for passenger transport/accommodation. Freshness filtering cannot cause a parent to normalize away a removed positive-weight class. Omission counts and reasons are logged.
 
-## Release monitoring
+Derived basket coverage starts September 2014. Earlier CPI observations remain intact but do not acquire invented weights. Earlier historical baskets/classifications cannot be treated as the current hierarchy without the missing component indices and classification correspondence.
 
-An empty headline database collects history immediately. A populated database
-waits for the next calendar quarter, polling every 30 seconds for up to 900
-seconds (`COLLECTOR_POLL_INTERVAL`, `COLLECTOR_MAX_WAIT`). Timeout is normal and
-persists a success log. `--no-watch` or explicit `--start-date` forces one pass.
+## Validation and stored-output audit
 
+Before writing: hierarchy, duplicates/orphans, published base dates, 11-group sums, child sums, sole-child inheritance, workbook-versus-CSV cross-file checks and headline Lowe chain aggregation are validated. The existing 0.1% headline tolerance is unchanged. With interim regimes the old September 2024 exception is removed: all 48 quarters pass, maximum relative error 0.061840%.
 
-`scripts/releases.py` classifies each run from source evidence (the release
-page's publication date and the latest covered quarter) against what the
-database held before the run, plus the rows the run changed: `first_release`,
-`same_release`, `new_release`, `revised_source`, and `layout_changed` (logged
-when extraction raises `SourceLayoutError`, before any write). Re-running
-against the same release on another day is `same_release`; a publication date
-that goes backwards fails the run. The status is written to the run log.
+After writing:
 
-## Point in time
+```bash
+python -m scripts.export_validation_xlsx --output validation.xlsx
+python -m scripts.reconcile --output reconciliation.json
+```
 
-- `vintage_date` is the UTC collection date, never the reference or publication
-  date. A first backfill is dated the day it was collected; it is not evidence
-  of what was known historically.
-- `metadata.last_publish_date` is the release's own publication date, kept apart
-  from `collected_at`.
-- Stats NZ publishes the current history only; earlier release snapshots are
-  not available from this source, so no historical vintage is reconstructed.
-  Later changes become new vintages; a same-day change overwrites that day's
-  vintage (template rule). Revisions older than the 5-month look-back are not
-  re-read on incremental runs.
+Both commands read stored latest vintages only, without fetching source data. The reconciliation reports children, basket date, untouched percentages, base/current/previous levels, opening shares, predictions, published relatives and residuals. It independently checks the basket formula and sibling sums. Incomplete coverage remains explicitly classified.
 
-## Verification (2026-09-27)
+The precision diagnostic uses official 0.01 percentage-point weights and whole-point indices after June 2017; historical pre-rebase levels are treated as unrounded. Conservative interval overlap establishes compatibility with public precision, not that rounding alone caused every discrepancy or that unpublished internal values have been recovered. An incompatible complete system raises an error. No weights or tolerances are calibrated against published parents.
 
-- PostgreSQL 16.13: live `main.py` run 1 wrote 22,590 observations, 163
-  metadata rows, 595 weights, 164 hierarchy rows (`first_release`); run 2 wrote
-  nothing and left every `collected_at` unchanged (`same_release`).
-- `tests/test_postgres_integration.py` on PostgreSQL: init, idempotent rerun,
-  later-day vintage, same-day overwrite, metadata MERGE with NULL in every
-  nullable column, time-series and weight MERGE, hierarchy MERGE with a NULL
-  parent, run-log NULL traceback and truncation, release classification.
-- Every emitted SQL statement parses with the Spark SQL grammar (pyspark 4.1.1).
-  **Databricks corporate runtime: not verified.**
-- Spot checks against raw CSV rows (first, middle, last, random) for all
-  groups, food, household energy, electricity and second-hand cars: exact.
+On the 30 September 2026 stored-output run: 2,609 complete systems are public-precision compatible, 79 systems are incomplete and 5,176 parent-period records lack a supported public basket or previous index. Zero complete systems have unexplained residuals. Counts depend on the available release.
 
-## Masuko authority verification
+The previous material accommodation error (SE9096, June 2024) used an obsolete June 2020 regime. Using official June 2023 weights and opening shares gives 0.955224757803 versus published 0.955113636364, residual 0.000111121439 instead of 0.0580152619. This is case A: the implementation omitted official regimes and was corrected. Exact public reconstruction remains limited by publication precision and unavailable elementary inputs; this is documented as required by the authority, rather than imposing an additional zero-residual gate.
 
-Pinned authority: `guimasuko/collector_template@4bc65765cedd9c14aec196cff382df6dfb318c77`. Physical `.github/` and `.vscode/` paths are checked against Git blobs. `.gitignore` and `scripts/databricks_engine.py` have no physical path in the template tree; they are canonical fenced blocks in `GUIDELINES.md` sections 8.1 and 8.9. The guideline Git blob is `089fbbca6a2241d3f02777b82631fbf81d49f6e0`; the two derived file blobs are `f0d1368264d24d7959d3137d618930a06f33795e` and `73821f7a530ab5cca2f5313180d71c17173e6e59`. `tests/test_architecture.py` checks all local blobs on every run. For independent source derivation, check out the exact authority commit and run `MASUKO_TEMPLATE_DIR=/path/to/collector_template python -m pytest -q tests/test_architecture.py`. This checks the guideline blob, extracts both fenced blocks and checks their hashes.
+## Release monitoring and point in time
 
-## Stored-output reconciliation gate (2026-09-30) — NOT READY
+An empty database collects immediately. A populated database polls every 30 seconds, up to 900 seconds, as required by forecast guideline section 10. Within the five-month rewind, changed source values return immediately even if the latest quarter did not change. The previous implementation could miss such a revision while waiting for a new period. Unchanged timeout is a successful monitored run.
 
-A separate audit read only the four database-exported sheets and reconstructed
-parent quarterly relatives with closing shares. 2,664 parent/quarter pairs
-were checked. Sibling sums differ from 1 by at most 3.33e-16, but that alone
-does not prove aggregation. The largest residual was accommodation services
-(SE9096), June 2024: predicted relative 0.8970983745 versus published
-0.9551136364, a 0.0580152619 difference. At the latest quarter (June 2026),
-55 parent checks had maximum relative difference 0.0025219387.
+Scheduled one-shot invocation is `python main.py --no-watch`; an explicit `--start-date` is also one-shot. Release classifications distinguish first/same/new/revised source and layout change. A backwards publication date fails.
 
-These discrepancies are not hidden by widening a tolerance or forcing weights
-to fit the published parent. The Table 8-derived shares are an auditable
-candidate system, not a proven reconstruction of every official aggregate.
-This forecast target remains NOT READY for complete aggregation sign-off,
-even though PG, live ingestion, PIT, idempotency and export gates pass.
+Collection timestamps are normalized to UTC naive before every write. Vintage is the UTC collection date. An unchanged rerun preserves collected_at; later-day changes insert a new vintage; same-day changes overwrite that day's vintage. As-of queries cannot see a future vintage. Current-source backfills do not reconstruct historical knowledge; incremental revision coverage is limited to the five-month rewind.
 
-[Stats NZ CPI methodology](https://datainfoplus.stats.govt.nz/item/nz.govt.stats/8b0860b8-cf63-4f12-a578-8eed8ba69ac3)
-explains annual adjustments to airfares and overseas accommodation after the
-2020 review, with related rescaling of other basket shares. The four fixed
-Table 8 baskets alone do not encode all such intervening changes. Integrating
-those published reweight regimes and revalidating every hierarchy level remains
-implementation work; it does not require a corporate Databricks credential.
+## Verification boundary
+
+Python 3.11 fresh environment, declared dependencies, PostgreSQL 16.15, live collection/repeat/export, UTC and non-UTC sessions, revision/as-of tests and real Spark SQL parsing pass. Production engine routing is tested with substitutes. Corporate Databricks/AKV runtime remains **NOT_VERIFIED_CORPORATE**.
+
+Verbatim files are compared against physical authority blobs or canonical GUIDELINES fenced blocks. `tests/test_architecture.py` can independently derive them using `MASUKO_TEMPLATE_DIR=/path/to/collector_template`. No authority file is modified by this repair.

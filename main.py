@@ -25,9 +25,9 @@ from scripts.original_weights import build_hierarchy, upsert_hierarchy, upsert_o
 from scripts.releases import LAYOUT_CHANGED, classify_release, stored_release
 from scripts.run_logs import insert_run_log
 from scripts.target_weights import derive_weights
-from scripts.time_series import get_last_observations, upsert_time_series
+from scripts.time_series import get_last_observations, has_source_revisions, upsert_time_series
 from scripts.validate import validate_release
-from scripts.weight_sources import parse_base_weights
+from scripts.weight_sources import collect_interim_weights, parse_base_weights
 from scripts.weights import upsert_weights
 
 logger = logging.getLogger("main")
@@ -99,13 +99,17 @@ def main(args: argparse.Namespace) -> int:
                 data.source_observations, data.source_catalog, data.release, data.workbook
             )
             weights = parse_base_weights(data.workbook, data.source_catalog)
+            weights.extend(collect_interim_weights(data.source_catalog))
         except SourceLayoutError:
             logger.error("release_status=%s", LAYOUT_CHANGED)
             raise
         # Validation reads the complete release; the freshness filter only
         # decides which index series are written to time_series/metadata.
         validate_release(full, weights)
-        effective_weights = derive_weights(full, weights)
+        # Aggregation outputs must be reconstructible from stored usable
+        # indices. A retired component stays in original_weights/hierarchy,
+        # but its incomplete parent system must not be silently normalized.
+        effective_weights = derive_weights(data, weights)
         observations = [item for item in data.observations if item.reference_date >= start]
         if not observations:
             raise ValueError(f"CPI source has no observations since {start}")
@@ -175,6 +179,9 @@ def _collect_for_release(engine: Engine, args: argparse.Namespace) -> SourceData
         latest = max(o.reference_date for o in data.observations if o.series_id == HEADLINE_SERIES)
         if latest >= expected:
             logger.info("New target period detected: %s", latest)
+            return data
+        if has_source_revisions(engine, data.observations, _start_date(engine, None)):
+            logger.info("Source revision detected before the next reference period")
             return data
         remaining = deadline - time.monotonic()
         if remaining <= 0:

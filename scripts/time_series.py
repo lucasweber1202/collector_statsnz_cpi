@@ -103,6 +103,26 @@ def _latest(conn: Connection, series_ids: list[str]) -> dict[tuple[str, date], d
     return {(str(row["series_id"]), _as_date(row["reference_date"])): dict(row) for row in rows}
 
 
+def has_source_revisions(engine: Engine, observations: list[Observation], start: date) -> bool:
+    """Detect changed stored values in the rewind window before waiting for a release."""
+    recent = [o for o in observations if o.reference_date >= start]
+    ids = sorted({o.series_id for o in recent})
+    with engine.connect() as conn:
+        for offset in range(0, len(ids), SERIES_BATCH_SIZE):
+            selected = ids[offset : offset + SERIES_BATCH_SIZE]
+            current = _latest(conn, selected)
+            selected_set = set(selected)
+            for obs in recent:
+                if obs.series_id not in selected_set:
+                    continue
+                row = current.get((obs.series_id, obs.reference_date))
+                if row is not None and round(float(row["value"]), ROUND_DECIMALS) != round(
+                    obs.value, ROUND_DECIMALS
+                ):
+                    return True
+    return False
+
+
 def _insert_statement(count: int) -> TextClause:
     values = ", ".join(
         "(" + ", ".join(f":{column}_{index}" for column in _COLUMNS) + ")" for index in range(count)

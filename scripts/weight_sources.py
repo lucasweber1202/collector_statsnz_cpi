@@ -2,17 +2,29 @@
 
 from __future__ import annotations
 
+import hashlib
+import html
 import io
+import logging
 import math
+import re
 from dataclasses import dataclass
 from datetime import date
 from typing import Any
+from urllib.parse import urljoin
 
+import httpx
 import openpyxl
 
-from scripts.extract import SourceLayoutError, build_series_id
+from scripts.config import REQUEST_TIMEOUT, USER_AGENT
+from scripts.extract import SourceLayoutError, _http_get, build_series_id, check_payload
 
 REGIMES = {2: date(2014, 6, 30), 4: date(2017, 9, 30), 6: date(2020, 6, 30), 8: date(2024, 12, 31)}
+INTERIM_BASES = (date(2021, 6, 30), date(2022, 6, 30), date(2023, 6, 30))
+INTERIM_PAGE = (
+    "https://www.stats.govt.nz/methods/price-index-methods-updates-for-the-september-2023-quarter/"
+)
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -31,6 +43,126 @@ class BaseWeight:
     parent_share: float | None
     label: str
     percent: float = 0.0
+
+
+def _weight_label(value: str) -> str:
+    """Match published labels while retaining parent/level identity checks."""
+    label = re.sub(r"\(\d+\)", "", value).strip().casefold()
+    label = (
+        label.removesuffix(" group").replace(", and", " and").replace("post-school", "post school")
+    )
+    # Source wording changes, not changes to the economic identity.
+    label = label.replace("purchase of new housing", "purchase of housing").replace(
+        "overseas accommodation costs prepaid", "overseas accommodation prepaid"
+    )
+    return "other educational fees" if label == "other education" else label
+
+
+def parse_interim_weights(blob: bytes, catalog: dict[str, dict[str, Any]]) -> list[BaseWeight]:
+    """Read all three interim regimes from the corrected official 2023 Table 1."""
+    book = openpyxl.load_workbook(io.BytesIO(blob), read_only=True, data_only=True)
+    try:
+        if "Table 1" not in book:
+            raise SourceLayoutError("Interim CPI expenditure Table 1 missing")
+        rows = list(book["Table 1"].values)
+    finally:
+        book.close()
+    columns = {10: INTERIM_BASES[0], 12: INTERIM_BASES[1], 14: INTERIM_BASES[2]}
+    if any(rows[7][c] != f"June {base.year}" for c, base in columns.items()):
+        raise SourceLayoutError("Interim CPI price-reference headers changed")
+    identities = {
+        (hierarchy_level(sid.removeprefix("STATSNZ_CPI_CPIQ_")), _weight_label(str(v["name"]))): sid
+        for sid, v in catalog.items()
+    }
+    raw: dict[tuple[str, date], tuple[float, str]] = {}
+    stack: dict[int, str] = {0: build_series_id("CPIQ.SE9A")}
+    for row in rows[10:]:
+        populated = [
+            (level + 1, str(v).strip())
+            for level, v in enumerate(row[:3])
+            if isinstance(v, str) and v.strip()
+        ]
+        if len(populated) != 1 or not any(isinstance(row[c], int | float) for c in columns):
+            continue
+        level, label = populated[0]
+        if label == "All groups":
+            continue
+        sid = identities.get((level, _weight_label(label)))
+        if sid is None:
+            # Package holidays was retired in 2017. The interim cells are
+            # explicitly zero; do not invent a native code for this old item.
+            if label == "Package holidays" and all(row[c] == 0 for c in columns):
+                continue
+            raise SourceLayoutError(f"Unknown interim CPI identity: level={level} {label}")
+        parent = parent_id(sid.removeprefix("STATSNZ_CPI_CPIQ_"))
+        if parent != stack.get(level - 1):
+            raise SourceLayoutError(f"Interim CPI hierarchy changed: {sid}")
+        stack[level] = sid
+        for deeper in range(level + 1, 4):
+            stack.pop(deeper, None)
+        for col, base in columns.items():
+            value = row[col]
+            if (
+                not isinstance(value, int | float)
+                or not math.isfinite(value)
+                or not 0 <= value <= 100
+            ):
+                raise SourceLayoutError(f"Invalid interim CPI weight: {sid} {base} {value}")
+            if (sid, base) in raw:
+                raise SourceLayoutError(f"Duplicate interim CPI weight: {sid} {base}")
+            raw[sid, base] = float(value), label
+    headline = build_series_id("CPIQ.SE9A")
+    for base in INTERIM_BASES:
+        raw[headline, base] = 100.0, "All groups"
+    result = []
+    for (sid, base), (value, label) in raw.items():
+        parent = parent_id(sid.removeprefix("STATSNZ_CPI_CPIQ_"))
+        parent_value = raw.get((parent, base), (100.0, ""))[0] if parent else 100.0
+        result.append(
+            BaseWeight(
+                sid,
+                parent,
+                base,
+                value / 100,
+                value / parent_value if parent_value else None,
+                label,
+                value,
+            )
+        )
+    if len({w.series_id for w in result if w.parent_id == headline}) != 11:
+        raise SourceLayoutError("Interim CPI workbook must publish all 11 groups")
+    return result
+
+
+def collect_interim_weights(catalog: dict[str, dict[str, Any]]) -> list[BaseWeight]:
+    """Discover the corrected workbook on its official methodology page."""
+    with httpx.Client(timeout=REQUEST_TIMEOUT, headers={"User-Agent": USER_AGENT}) as client:
+        response = _http_get(client, INTERIM_PAGE)
+        response.raise_for_status()
+        page = html.unescape(response.text).replace("\\/", "/")
+        links = re.findall(r'"DocumentLink":"([^"]+)"', page)
+        links += re.findall(r'href="([^"]+)"', page)
+        urls = {
+            urljoin(INTERIM_PAGE, u)
+            for u in links
+            if "consumers-price-index-reweight-2023-corrected.xlsx" in u
+        }
+        if len(urls) != 1:
+            raise SourceLayoutError(
+                "Corrected official interim CPI workbook link missing or ambiguous"
+            )
+        url = urls.pop()
+        if not url.startswith("https://www.stats.govt.nz/"):
+            raise SourceLayoutError("Interim CPI workbook is not on the official host")
+        blob = check_payload(_http_get(client, url), "xlsx")
+    logger.info(
+        "Official interim baskets: page=%s workbook=%s table=1 bases=%s sha256=%s",
+        INTERIM_PAGE,
+        url,
+        INTERIM_BASES,
+        hashlib.sha256(blob).hexdigest(),
+    )
+    return parse_interim_weights(blob, catalog)
 
 
 def hierarchy_level(native: str) -> int:
